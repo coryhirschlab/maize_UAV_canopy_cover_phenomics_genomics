@@ -1,0 +1,943 @@
+---
+title: "Canopy Cover GWAS Pipeline"
+author: "Julian Cooper"
+date: "4/14/2022"
+output: html_document
+---
+
+##### Misc. bash code ###
+```{bash}
+
+#Transfer single file to MSI
+scp /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/numerical_GAPIT.R coop0409@mangi.msi.umn.edu:/home/hirschc3/coop0409/GWAS/
+
+#Transferring many files to MSI
+https://www.msi.umn.edu/support/faq/how-do-i-use-filezilla-transfer-data
+
+```
+
+# Setup R in MSI
+```{bash}
+
+# Start interactive shell
+srun -N 1 --ntasks-per-node=4  --mem-per-cpu=1gb -t 1:00:00 -p interactive --pty bash
+
+# Load r v. 4.0.4 module
+module load R/4.0.4
+
+# Launch R
+R
+```
+
+# Setup GAPIT in R
+```{r}
+# Install GAPIT from Github
+install.packages("devtools") devtools::install_github("jiabowang/GAPIT3",force=TRUE)
+library(GAPIT3)
+source("http://zzlab.net/GAPIT/GAPIT.library.R") source("http://zzlab.net/GAPIT/gapit_functions.txt")
+packageurl<-"https://cran.r-project.org/src/contrib/Archive/nloptr/nloptr_1.2.1.tar.gz"
+install.packages(packageurl, repos=NULL, type="source")
+install.packages("bigmemory")
+install.packages("tidyverse")
+install.packages("lme4")
+install.packages("magrittr")
+install.packages("multtest")
+install.packages("snpStats") #?
+install.packages("gplots")
+install.packages("LDheatmap")
+install.packages("genetics")
+install.packages("ape")
+install.packages("EMMREML")
+install.packages("compiler") 
+install.packages("scatterplot3d")
+install.packages("bigmemory")
+install.packages("biganalytics")
+
+
+```
+
+# Step 1: Convert hapmap to numerical format
+RUN ON MSI
+
+Script Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/scripts
+Script MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/scripts
+
+Purpose: Converts christine_common_final.mp.txt hapmap to numeric format.
+Output: GAPIT.Genotype.Numerical.txt and associated GAPT output files. 
+
+Output Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/not_Github/genomic_data
+Output MSI Loation: /home/hirschc3/coop0409/canopy_cover/GWAS/genomic_data
+
+## numerical_GAPIT.R
+```{r numerical_GAPIT.R}
+### Numerical GAPIT Conversion
+### Julian Cooper
+### 02/05/2022
+
+##############################
+# Sourcing GAPIT and FarmCPU #
+##############################
+source("http://zzlab.net/GAPIT/emma.txt")
+source("http://zzlab.net/GAPIT/gapit_functions.txt")
+source("http://zzlab.net/FarmCPU/FarmCPU_functions.txt")
+
+########################
+# Setting memory limit #
+########################
+#memory.limit()
+#memory.limit(size = 35000) # Had to increase device memory allocation to R in order to get this loaded.
+
+#########################
+# Set Working Directory #
+#########################
+setwd("/home/hirschc3/coop0409/canopy_cover/GWAS/genomic_data")
+
+################
+# Loading Data #
+################
+myG <- read.table("/home/hirschc3/coop0409/canopy_cover/GWAS/genomic_data/christine_common_final.hmp.txt", sep = "\t", header = F) 
+############################################################
+# Running Gapit for Conversion of HapMap to Numeric Format #
+############################################################
+print("Starting GAPIT")
+
+myGAPIT <- GAPIT(
+  G = myG,
+  output.numerical=T,
+  PCA.total = 5
+)
+
+```
+
+## run_numerical_GAPIT.sh
+```{bash}
+
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=100gb
+#SBATCH --time=40:00:00
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=coop0409@umn.edu
+#SBATCH -o /home/hirschc3/coop0409/GWAS/%j.out
+#SBATCH -e /home/hirschc3/coop0409/GWAS/%j.err
+
+cd /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/
+
+# Load R
+module load R/4.0.4
+
+# Running Script
+Rscript --max-ppsize=500000 numerical_GAPIT.R
+
+```
+
+### Step 1.1: Create list with taxa name from numerical hapmap
+RUN ON MSI - NO SHELL SCRIPT
+Output: Text list with one column of numerical hapmap taxa names
+
+Output Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/txt_lists/GD_Taxa_List.txt
+Output MSI Loation: /home/hirschc3/coop0409/canopy_cover/GWAS/txt_lists/GD_Taxa_List.txt
+```{bash}
+
+# Run from ~/canopy_cover/GWAS/genomic_data
+cut -f1 ~/canopy_cover/GWAS/genomic_data/GAPIT.Genotype.Numerical.txt > ~/canopy_cover/GWAS/txt_lists/GD_Taxa_List.txt
+
+```
+
+# Step 2: Create BLUPs
+RUN ON LAPTOP
+Done in /Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/canopy_cover_BLUPs_04302022.Rmd. Output in /Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/data. All names changed to match hapmap names during creation. 
+
+## Step 2.1: Making text file with contents of folder 
+RUN ON LAPTOP - RUN FROM DIRECTORY YOU WANT LIST OF
+```{bash}
+
+# Change directory to file location you want list of.
+
+cd /Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/data/BLUP_output
+
+# Makes a list of all files in BLUP and saves as a text file in the GWAS txt_lists folder for use in following GWAS scripts. 
+ls > /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/txt_lists/BLUP_contents.txt
+
+# Upload text list to MSI: ~/canopy_cover/GWAS/txt_lists/BLUP_contents.txt
+# Upload BLUP files to MSI: ~/canopy_cover/GWAS/BLUP_data/
+
+```
+
+# Step 3: Match BLUP to hapmap
+RUN ON MSI - start by 'mkdir myY' as output destination.
+qsub /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/run_split_BLUP.sh
+Run on 5/11/22.
+Rerun 5/25 after renaming phenotype column name in BLUP files. sbatch /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/run_split_BLUP.sh
+
+Script Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/scripts
+Script MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/scripts
+
+PURPOSE: Match BLUP files to be order and contents of numerical genotype. Even though names were matched when making BLUPs, this step double checks that all phenotypes have an associated genotype and are in hapmap order. 
+OUTPUT: 385 BLUP files go in to script, 385 come out.
+
+Output Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/myY
+Output MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/myY
+
+## split_BLUP.R
+```{r}
+
+##################
+# Load Libraries #
+##################
+library(tidyverse)
+library(lme4)
+library(magrittr)
+
+#########################
+# Set Working Directory #
+#########################
+setwd("/home/hirschc3/coop0409/canopy_cover/GWAS/") # Only for use in MSI
+
+################
+# Loading Data #
+################
+
+blupFilesList <- read.delim("/home/hirschc3/coop0409/canopy_cover/GWAS/txt_lists/BLUP_contents.txt",head=F)
+
+for (i in 1:nrow(blupFilesList)) {
+
+myG <- read.table("/home/hirschc3/coop0409/canopy_cover/GWAS/txt_lists/GD_Taxa_List.txt", head = T)
+
+Env_1_BLUPs <-read.table(paste0("/home/hirschc3/coop0409/canopy_cover/GWAS/BLUP_data/", blupFilesList[i, 1]),head=T)
+
+#######################################
+# List of Genotypes with Genomic Data #
+#######################################
+genotypes <- myG$taxa
+
+#########################################
+# Matching BLUP and Genomic Information #
+#########################################
+Env_1_Y <- Env_1_BLUPs %>%
+  filter(taxa %in% genotypes)
+
+dim(Env_1_Y)
+
+genos_1 <- tibble(taxa = genotypes) %>%
+  filter(taxa %in% Env_1_Y$taxa)
+
+dim(genos_1)
+
+Env_1_Y_Match <- genos_1 %>%
+  full_join(Env_1_Y)
+
+dim(Env_1_Y_Match)
+sum(Env_1_Y_Match$taxa == genos_1$taxa)
+
+#########################
+# Write Out Subset Data #
+#########################\
+newFile = strsplit(blupFilesList[i,1], split = ".", fixed = T)[[1]][1]
+
+### Phenotypic BLUP Data ###
+write_csv(Env_1_Y_Match,paste0("/home/hirschc3/coop0409/canopy_cover/GWAS/myY/myY_env_", newFile, ".csv"))
+}
+
+```
+
+## run_split_BLUP.sh
+```{bash}
+
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=100gb
+#SBATCH --time=10:00:00
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=coop0409@umn.edu
+#SBATCH -o /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/err_out/%j.out
+#SBATCH -e /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/err_out/%j.err
+
+cd /home/hirschc3/coop0409//canopy_cover/GWAS/scripts
+
+# Load R
+module load R/4.0.4
+
+# Running Script
+Rscript --max-ppsize=500000 /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/split_BLUP.R
+
+```
+
+## Step 3.1: Quality check split_BLUP
+```{bash}
+
+# Move to results directory
+cd /home/hirschc3/coop0409/canopy_cover/GWAS/myY
+
+# Check file lengths of random years, GDD
+#wc -l /home/hirschc3/coop0409/GWAS/myY_split_env/FILE_TO_CHECK.txt
+wc -l /home/hirschc3/coop0409/GWAS/myY_split_env/
+
+# Should be same as associated /home/hirschc3/coop0409/canopy_cover/GWAS/BLUP_data/ file.
+```
+
+# Step 4: Match hapmap to BLUPs
+RUN ON MSI
+qsub /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/run_GWAS_Env_Splitter.sh
+Run on 5/11/22
+
+Script Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/scripts
+Script MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/scripts
+
+PURPOSE: Makes new hapmaps with just the taxa in each BLUP file and in order of the file. 
+OUTPUT: 385 individualized hapmaps for each phenotype-year-GDD combo.
+
+Output Computer Location: NA
+Output MSI Location: /scratch.global/coop0409/myGD #ONLY STORES ON SCRATCH FOR 30 DAYS
+
+## GWAS_Env_Splitter.pl
+```{perl}
+
+#!/bin/perl
+
+#################
+# Starter Stuff #
+#################
+use strict;
+use warnings;
+use Getopt::Std;
+use Data::Dumper;
+
+opendir my $directfiles, "/home/hirschc3/coop0409/canopy_cover/GWAS/myY" or die "Cannot open directory: $!";
+
+my @files = grep ! /^\./, readdir $directfiles;
+
+
+foreach(@files) {
+print;
+print "\n";
+}
+
+my $i; # Initialize iteration variable
+foreach my $file (@files) {
+
+        if($file eq ".")
+        {
+                next;
+        }elsif($file eq "..")
+        {
+                next;
+        }else{
+	print "Currently Working on Environment $file\n"; # Tell me which environment is in progress
+
+        ######################
+        # Opening File Paths #
+        ######################
+        open(my $Env_in_fh, '<', "/home/hirschc3/coop0409/canopy_cover/GWAS/myY/${file}") or die("Env Dataset Couldn't be Found\n"); # Open path to environment taxa
+
+        open(my $GD_in_fh, '<', "/home/hirschc3/coop0409/canopy_cover/GWAS/genomic_data/GAPIT.Genotype.Numerical.txt") or die("GD Dataset Couldn't be Found\n"); # Open path to genotypic dataset -- Change this later!
+
+        my ($sc1, $sc2, $sc3, $sc4, $sc5, $sc6) = split('_', $file); # split the name of the myY file so parts can be reused
+
+        open(my $Env_out_fh, '>', "/scratch.global/coop0409/myGD/GD_Env_${sc4}_${sc5}_${sc6}.txt") or die("Output Dataset Couldn't be Found\n"); # Open path to output file
+
+        ###################
+        # Populating Hash #
+        ###################
+        my %env_hash; # Initialize hash
+        while(my $line = <$GD_in_fh>){ # While there are lines in the genotype dataset...
+                chomp $line; # Remove tailing \n
+                my @fields = split('\t', $line); # Split first line into separate elements by tabs
+                my $taxa = $fields[0]; # Extract the first column (taxa) from the genotypic dataset
+                #print "first taxa: $taxa\n";
+                my $num_cols = scalar @fields-1; # This should count the number of columns present, and subtract one. This is important since the indexing in perl starts at 0.
+                my $geno = join "\t", @fields[1..$num_cols]; # Rejoin all of the genotypic data columns -- This will not throw an error if the wrong number of fields are selected, so be careful!
+                #print "Geno: $geno\n";
+                $env_hash{$taxa} = $geno; # Add taxa key and genotypic values to hash -- all genotypic data needs to be in one element
+        }
+#print Dumper(\%env_hash);
+
+        ########################################################
+        # Matching Keys and Values in Environment Taxa Dataset #
+        ########################################################
+        while(my $key = <$Env_in_fh>){ # While there are lines in environment taxa dataset...
+                chomp $key; # Remove tailing \n
+                my @fields = split(',', $key);
+                my $taxa_key = $fields[0];
+                #print "key: $taxa_key\n";
+
+                if (exists $env_hash{$taxa_key} ) {
+                  my $value = $env_hash{$taxa_key};
+                  #print "value: $value\n";
+                  #print $Env_out_fh $taxa_key, "\t", $env_hash{$taxa_key}, "\n"; # Print matches in order of Key    Numerical Data \n
+                  print $Env_out_fh "$taxa_key\t$value\n";
+                }
+                else {
+					print "NO MATCH!!\n";
+                  next;
+                }
+              }
+
+	####################
+        # Close File Paths #
+        ####################
+        close $Env_in_fh;
+        close $GD_in_fh;
+        close $Env_out_fh;
+}
+}
+
+closedir $directfiles;
+
+```
+
+# run_GWAS_Env_Splitter.sh
+```{bash}
+
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=100gb
+#SBATCH --time=48:00:00
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=coop0409@umn.edu
+#SBATCH -o /scratch.global/coop0409/e_o_files/%j.out
+#SBATCH -e /scratch.global/coop0409/e_o_files/%j.err
+
+cd /scratch.global/coop0409/
+
+# Running Script
+perl /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/GWAS_Env_Splitter.pl
+
+```
+
+# Step 5: BLUP Iterations
+RUN ON PERSONAL COMPUTER
+
+Script Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/scripts
+Script MSI Location: NA
+
+PURPOSE: Remove filler beginning and end from BLUP file list (Step 2.1).
+OUTPUT: List of unique identifiers for each phenotype that can be fed into p-value and GAPIT code to submit batch jobs through MSI.
+
+Output Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/txt_lists/BLUP_iterations.txt
+Output MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/txt_lists/BLUP_iterations.txt
+
+## extract_iterations.pl
+```{pl}
+
+#Julian Cooper
+#02282022
+#extract_iterations.pl
+
+#The purpose of this file is to take a list of all BLUP file names and remove beginning and end characters.
+# Output is a text file with just the unique identifier for each BLUP.
+# This will be used in the p_value_GAPIT.R script to get unique p-values for each phenotype.
+
+#! /usr/bin/perl
+
+use strict; # Call variables with "my"
+use warnings; # Print warnings to terminal
+use Getopt::Std; # Load command line usage module
+
+# Defined usage variables
+my $usage = "\n$0 -i <INPUT> -o <OUTPUT> -h <help>\n\n";
+
+# Calling the options from command line
+our ($opt_i, $opt_o, $opt_h);
+getopts("i:o:h") or die "$usage";
+
+# If an input, annotation, output, or help option is listed in the command line, die to user
+if( (!(defined $opt_i)) || (!(defined $opt_o)) || (defined $opt_h) ) {
+  print "$usage";
+  exit;
+}
+
+#open all files
+open (my $input_fh, '<', $opt_i) || die "Issue with input BLUP list file\n";
+open (my $out_fh, '>', $opt_o) || die "Issue with output file\n";
+
+# Purpose: Join annotation into one string from two columns
+
+# Call data frame
+<$input_fh>;
+
+# Isolate line by line
+while (my $line = <$input_fh>) {
+  chomp $line;
+
+# Split columns
+my ($head, $description) = split ("\t", $line);
+#print "$head\n";
+
+# Save gene from fasta head using regex
+my $iter;
+if ($head =~ /BLUPs_(.*?).txt/ ) {
+  $iter = $1;
+  print "$iter\n";
+  print $out_fh "$iter\n";
+
+         }
+         else {
+           print "No match\n";
+           #print $out_fh "$fasta_key\n"
+         }
+       }
+
+# Close everything
+close $input_fh;
+close $out_fh;
+
+```
+
+## Run extract_iterations
+No shell script, just run from terminal.
+Run 5/9/22
+Rerun 5/12/22: For some reason, script is not including first phenotype file for BLUP_contents.txt file. Add "Area_2018_AUPC" manually as first line of text in BLUP_iterations.txt. Should be 385 iterations total.
+```{bash}
+
+perl /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/scripts/extract_iterations.pl -i /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/txt_lists/BLUP_contents.txt -o /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/txt_lists/BLUP_iterations.txt
+
+```
+
+# Step 6: Obtain p-vals for each phenotype using FarmCPU
+RUN ON MSI
+Run 5/12/22: Only 382 output files. Area_2018_AUPC(1) was missing from iteration list. Added back in on 5/16. Point_2021_1000(92) and Point_2021_1600(104) did not run, reason unknown.
+Run 5/16/22: Only run missing iterations. sbatch --array=1,92,104 /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/run_p_value_GAPIT.sh. Success, 385 p-vals txt files exist.
+
+Script Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/scripts/
+Script MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/
+
+PURPOSE: Run 100 iterations of FarmCPU unification to obtain p-values for eventual significance threshold.
+OUTPUT: List of 100 p-values for each phenotype. Eventually use top 5th percentile as threshold, which is also output by default from GAPIT as the last row in the list. 
+
+Output Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/results/p_vals
+Output MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/p_vals/
+
+## p_value_GAPIT.R
+```{r}
+### p_value_GAPIT.R
+### Julian Cooper
+### 05/10/2022
+
+#####################
+# Loading Libraries #
+#####################
+library("multtest")
+library("snpStats")
+library("gplots")
+library("LDheatmap")
+library("genetics")
+library("ape")
+library("EMMREML")
+library("compiler")
+library("scatterplot3d")
+library("bigmemory")
+library("biganalytics")
+
+##############################
+# Sourcing GAPIT and FarmCPU #
+##############################
+source("http://zzlab.net/GAPIT/emma.txt")
+source("http://zzlab.net/GAPIT/gapit_functions.txt")
+source("http://zzlab.net/FarmCPU/FarmCPU_functions.txt")
+
+########################
+# Setting memory limit #
+########################
+#memory.limit()
+#memory.limit(size = 35000)
+
+###############################
+# Getting Shell Script Inputs #
+###############################
+cli_arg <- commandArgs(trailingOnly = TRUE) # takes a variable following the script
+iter <- as.character(cli_arg[1])
+print(iter)
+
+#########################
+# Set Working Directory #
+#########################
+setwd("/home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/p_vals/")
+
+################
+# Loading Data #
+################
+myY <- read.csv(paste0("/home/hirschc3/coop0409/canopy_cover/GWAS/myY/myY_env_BLUPs_", iter, ".csv"), header = T) # phenotypic data (split by year)
+
+myGD <- read.big.matrix(paste0("/scratch.global/coop0409/myGD/GD_Env_", iter,".csv.txt"), type = "char", sep = "\t", head = T) #name needs to be GAPIT.Genotype.Numerical.txt
+
+myGM <- read.table("/home/hirschc3/coop0409/canopy_cover/GWAS/genomic_data/GAPIT.Genotype.map.txt", head=T) # also output from numerical_GAPIT.R
+
+
+#################################
+# Determining P-Value Threshold #
+#################################
+FarmCPU.P.Threshold(
+  Y=myY[,c(1,2)], #blup dataset    #only two columns allowed, the first column is taxa name and the second is phenotype value
+  GD=myGD,
+  GM=myGM, #genetic map dataset
+  trait=paste0("FarmCPU_p_threshold_", iter), 
+  theRep=100 #number of permutation times
+)
+```
+
+## run_p_value_GAPIT.sh
+sbatch --array=1-385 /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/run_p_value_GAPIT.sh
+```{bash}
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=100gb
+#SBATCH --time=30:00:00
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=coop0409@umn.edu
+#SBATCH -o /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/err_out/%j.out
+#SBATCH -e /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/err_out/%j.err
+
+cd /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/
+
+# Load R
+module load R/4.0.4
+
+# Running Script
+
+iter="$(/bin/sed -n ${SLURM_ARRAY_TASK_ID}p /home/hirschc3/coop0409/canopy_cover/GWAS/txt_lists/BLUP_iterations.txt | cut -f 1)"
+
+Rscript --max-ppsize=500000 home/hirschc3/coop0409/canopy_cover/GWAS/scripts/p_value_GAPIT.R ${iter}
+
+```
+
+# Step 7: Run GWAS using FarmCPU p-vals
+# Step 7.1: Make GWAS_out directories from iteration list
+RUN ON MSI
+Run 5/12, again 5/16
+
+Script Computer Location: NA
+Script MSI Location: NA
+
+PURPOSE: Makes a new directory for each phenotype file where GWAS results will be saved
+OUTPUT: 385 new directories, named after each BLUP iteration
+
+Output Computer Location: NA
+Output MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/GWAS_results/PHENOTYPE_YEAR_TIME
+```{bash}
+# First switch to results directory
+cd /home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/GWAS_results
+
+# Makes a new directory in parents GWAS_results directory, one for each phenotype BLUP iteration
+while read dirname; do
+    mkdir "$dirname"
+done < /home/hirschc3/coop0409/canopy_cover/GWAS/txt_lists/BLUP_iterations.txt
+
+# Check results
+ls | wc -l # Should be 385 new directories
+```
+
+# Step 7.2: Genome wide association study for canopy cover
+RUN ON MSI
+Run on 05/16/2022: Test run, just one BLUP iteration to start - sbatch --array=2 run_canopycover_GWAS_FarmCPU.sh. Success!
+Run 05/17/2022: sbatch --array=1-385 run_canopycover_GWAS_FarmCPU.sh
+Rerun 05/23/2022 with stability phenotype columns renamed and with area scaling experiment to see if effect size is dependant on scale of trait value: sbatch --array=1-385 /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/run_canopycover_GWAS_FarmCPU.sh
+Rerun 05/25/2022 with normal area values after scaling experiment to see if effect size is dependant on scale of trait value: sbatch --array=1-4 /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/run_canopycover_GWAS_FarmCPU.sh
+
+Script Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/scripts
+Script MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/scripts
+
+PURPOSE: Find associations between phenotypic values and SNPs in putative causal genomic regions
+OUTPUT: 385 GWAS results files, one for each phenotype-year-GDD combo. Each will populate own directory.
+
+Output Computer Location: NA
+Output MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/GWAS_results/PHENOTYPE_YEAR_TIME/
+
+## canopycover_GWAS_FarmCPU.R
+```{r}
+### canopycover_GWAS_FarmCPU.R
+### Julian Cooper
+### 05/16/2022
+
+#####################
+# Loading Libraries #
+#####################
+library("tidyverse")
+library("multtest")
+library("snpStats")
+library("gplots")
+library("LDheatmap")
+library("genetics")
+library("ape")
+library("EMMREML")
+library("compiler")
+library("scatterplot3d")
+library("bigmemory")
+library("biganalytics")
+
+##############################
+# Sourcing GAPIT and FarmCPU #
+##############################
+source("http://zzlab.net/GAPIT/emma.txt")
+source("http://zzlab.net/GAPIT/gapit_functions.txt")
+source("http://zzlab.net/FarmCPU/FarmCPU_functions.txt")
+
+###############################
+# Getting Shell Script Inputs #
+###############################
+cli_arg <- commandArgs(trailingOnly = TRUE) # takes a variable following the script
+iter <- as.character(cli_arg[1])
+print(iter)
+
+#########################
+# Set Working Directory #
+#########################
+
+setwd(paste0("/home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/GWAS_results/", iter, "/"))
+
+################
+# Loading Data #
+################
+
+myY <- read.csv(paste0("/home/hirschc3/coop0409/canopy_cover/GWAS/myY/myY_env_BLUPs_", iter, ".csv"), header = T) # phenotypic data (split by year)
+
+myGD <- read.big.matrix(paste0("/scratch.global/coop0409/myGD/GD_Env_", iter,".csv.txt"), type = "char", sep = "\t", head = T) #name needs to be GAPIT.Genotype.Numerical.txt
+
+myGM <- read.table("/home/hirschc3/coop0409/canopy_cover/GWAS/genomic_data/GAPIT.Genotype.map.txt", head=T) # also output from Numerical_GAPIT.R
+
+myPCA <- read.csv("/home/hirschc3/coop0409/canopy_cover/GWAS/genomic_data/GAPIT.PCA.csv", header=T)
+
+myPValue <- read.delim(paste0("/home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/p_vals/FarmCPU.p.threshold.optimize.FarmCPU_p_threshold_", iter, ".txt"), header = F, sep = "\t")
+
+# Set p-value threshold as the 5th percentile of the 100 FarmCPU iterations
+pval <- quantile(myPValue$V1, 0.05)
+print(pval)
+
+#########################
+# Filtering PCA Dataset #
+#########################
+newPCA <- myPCA %>%
+  filter(taxa %in% myY$taxa) %>%
+  as_tibble()
+
+######
+# QC #
+######
+length(myY$taxa)
+length(newPCA$taxa)
+sum(myY$taxa == newPCA$taxa)
+
+#################
+# FarmCPU Model #
+#################
+myFarmCPU <- FarmCPU(
+  Y=myY, #phenotype
+  GD=myGD, #Genotype matrix
+  GM=myGM, #Genotypic map
+  CV=newPCA[,-1], #Covariate variables (First 5 PCAs from GAPIT); taxa should not be included.
+  threshold.output=1, #P value smaller than threshold.output will be output in GWAS table
+  p.threshold=pval,
+  MAF.calculate=TRUE, #Calculate minor allele frequency (MAF) or not, if set to TRUE, the SNPs with a lower MAF (<maf.threshold) will be deleted
+  method.bin="optimum",
+  maf.threshold=0.05, #When MAF.calculate=TRUE, the SNPs with a lower MAF (<maf.threshold) will be deleted
+  maxLoop=50, #Maximum number of iterations allowed
+  memo = paste("Env_", iter, sep = "") #Add extension to file name for parallel runs
+)
+
+```
+
+## run_canopycover_GWAS_FarmCPU.sh
+```{bash}
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=8
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=100gb
+#SBATCH --time=12:00:00
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=coop0409@umn.edu
+#SBATCH -o /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/err_out/%j.out
+#SBATCH -e /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/err_out/%j.err
+
+cd /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/
+
+# Load R
+module load R/4.0.4
+
+# Running Script
+
+iter="$(/bin/sed -n ${SLURM_ARRAY_TASK_ID}p /home/hirschc3/coop0409/canopy_cover/GWAS/txt_lists/BLUP_iterations.txt | cut -f 1)"
+
+Rscript --max-ppsize=500000 /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/canopycover_GWAS_FarmCPU.R ${iter}
+
+
+```
+
+# Step 8: Extract significant SNPs
+RUN ON MSI
+Run on 5/28: sbatch /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/run_sig_snp_identifier.sh
+
+Script Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/scripts
+Script MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/scripts
+
+PURPOSE: Extract significant SNPs using p-values
+OUTPUT: Large data frame with with only significant SNPs from each phenotype
+
+Output Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/results/all_sig_snps_FarmCPU.txt
+Output MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/all_sig_snps_FarmCPU.txt
+
+## sig_snp_identifier.R
+```{r}
+### FarmCPU Significant SNP Identifier
+### Julian Cooper
+### 05/16/2022
+
+# Loading Libraries
+library(tidyr)
+
+# read in file with variables
+variables <- read.delim("/home/hirschc3/coop0409/canopy_cover/GWAS/txt_lists/BLUP_iterations.txt", header = F)
+
+combined_sig_snps <- data.frame()
+
+for (rows in 1:nrow(variables)) {
+  
+  iteration <- variables[rows,1]
+  
+  ###################
+  # Find threshold #
+  ##################
+  # use if statement to skip missing iterations
+   if (file.exists(paste0("/home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/p_vals/FarmCPU.p.threshold.optimize.FarmCPU_p_threshold_",iteration,".txt"))) {
+         pthresfile <- read.delim(paste0("/home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/p_vals/FarmCPU.p.threshold.optimize.FarmCPU_p_threshold_",iteration,".txt")) # open file
+    
+    # identify the p threshold from the p threshold file
+    pthreshold <- pthresfile[nrow(pthresfile),1]
+    # identify the negative log 10 of the pthreshold
+    logthreshold <- (-log10(pthreshold))
+    
+    #########################
+    # Find Significant SNPs #
+    #########################
+    # open farmCPU output file for the iteration
+    if (file.exists(paste0("/home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/GWAS_results/",iteration, "/FarmCPU.Env_", iteration, ".BLUPS.GWAS.Results.csv"))) {
+              farmoutfile <- read.csv(paste0("/home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/GWAS_results/",iteration, "/FarmCPU.Env_", iteration, ".BLUPS.GWAS.Results.csv"))
+      
+      # make a column with the -log10 of the p value
+      farmoutfile$logP <- (-log10(farmoutfile$P.value))
+      
+      # filter based on -log(p)
+      sigsnps <- farmoutfile[farmoutfile$logP >= logthreshold,]
+      
+      if (nrow(sigsnps)>0) {
+        
+        sigsnps$BLUP_file <- iteration
+        
+        combined_sig_snps <- rbind(combined_sig_snps, sigsnps)
+        
+      }
+      else {
+        next
+      }
+    } else {
+      next
+    }
+  } else {
+    next
+  }
+}
+
+final_combined_sig_snps <- combined_sig_snps %>%
+  na.omit()
+
+#print file with significant snps
+write.table(final_combined_sig_snps, file = "/home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/all_sig_snps_FarmCPU.txt", sep = "\t", row.names = F, col.names = T)
+
+```
+
+## run_sig_snp_identifier.sh
+```{bash}
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=100gb
+#SBATCH --time=5:00:00
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=coop0409@umn.edu
+#SBATCH -o /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/err_out/%j.out
+#SBATCH -e /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/err_out/%j.err
+
+# Load R
+module load R/4.0.4
+
+# Running Script
+Rscript --max-ppsize=500000 /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/sig_snp_identifier.R
+```
+
+# Step 9: Save GWAS Results From Each Iteration
+*** start by mkdir /home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/GWAS_file_extract
+
+RUN ON MSI 
+Run : sbatch /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/run_GWAS_file_extract.sh
+
+Script Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/scripts
+Script MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/scripts
+
+PURPOSE: Extract GWAS result csvs from each BLUP iteration for future use and easy transfer to personal computer
+OUTPUT: One csv file from each BLUP iteration with significant results
+
+Output Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/results/GWAS_file_extract
+Output MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/GWAS_file_extract
+
+## GWAS_file_extract.R
+```{r}
+
+### Extract GWAS Results csv
+### Julian Cooper
+### 05/25/2022
+
+# Loading Libraries
+library(tidyr)
+
+# read in file with variables
+variables <- read.delim("/home/hirschc3/coop0409/canopy_cover/GWAS/txt_lists/BLUP_iterations.txt", header = F)
+
+for (rows in 1:nrow(variables)) {
+  
+  iteration <- variables[rows,1]
+    
+    #########################
+    # Find Significant SNPs #
+    #########################
+    # open farmCPU output file for the iteration
+    if (file.exists(paste0("/home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/GWAS_results/",iteration, "/FarmCPU.Env_", iteration, ".BLUPS.GWAS.Results.csv"))) {
+              
+      farmoutfile <- read.csv(paste0("/home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/GWAS_results/",iteration, "/FarmCPU.Env_", iteration, ".BLUPS.GWAS.Results.csv"))
+      
+      write.csv(farmoutfile, file = paste0("/home/hirschc3/coop0409/canopy_cover/GWAS/FarmCPU/GWAS_file_extract/FarmCPU.Env_", iteration, ".BLUPS.GWAS.Results.csv"), row.names = F, col.names = T)
+
+    } else {
+      next
+    }
+  } 
+
+```
+
+## run_GWAS_file_extract.sh
+```{bash}
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=100gb
+#SBATCH --time=5:00:00
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=coop0409@umn.edu
+#SBATCH -o /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/err_out/%j.out
+#SBATCH -e /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/err_out/%j.err
+
+# Load R
+module load R/4.0.4
+
+# Running Script
+Rscript --max-ppsize=500000 /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/GWAS_file_extract.R
+```

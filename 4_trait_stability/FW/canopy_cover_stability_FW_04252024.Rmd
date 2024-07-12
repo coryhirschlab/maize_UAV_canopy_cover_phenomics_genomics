@@ -1,0 +1,575 @@
+---
+Yestitle: "Dynamic Stability: FW Slope"
+author: "Julian Cooper"
+date: "11/13/2023"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Background
+
+## Bayesian Regression
+Bayesian statistics is a mathematical procedure that applies probabilities to statistical problems to represent uncertainty. It provides researchers the tools to update their beliefs in the evidence of new data.
+
+Example: I have misplaced my phone somewhere in the home. I can use the phone locator on the base of the instrument to locate the phone and when I press the phone locator the phone starts beeping. Which area of my home should I search?
+
+Requires data, a generative model, and prior (info the model has before seeing the data).
+
+Generative model: Feed model fixed parameters values and get simulated data in return. Useful for seeing how much data varies (Monte Carlo simulation). Can also be flipped. If you know the data, you can feed it into a generative model to find the unknown parameters.
+
+Prior: Probability to represent uncertainty in the model. 
+
+If you know the data, you can simulate parameters based on prior distributions until your generative model matches your observed data. For example, If 16 people see an add and 6 buy the product, you can assume the the probability of buying is 0-1.0, and run 100,000s of iterations of your generative model creating simulated data until you find a statistically significant parameter (probability) that matches your actual purchase rate of 6/16.
+
+Posterior: Distribution (probability) of the parameter. 
+
+Keeping with our advertisement example, if the prior distribution is uniform 0-1.0, after many iterations we see that our actual posterior parameter distribution is a normal curve centered between .3 and .4.
+
+Posterior distribution is the end value from our data. Maximum likelihood estimate for our parameter is the highest probability parameter value from our posterior distribution. Could also use posterior mean of distribution. Often, a 90% credible interval is given covering the most likely parameter values. 
+
+## Markov Chain Monte Carlo (MCMC)
+A class of algorithms for sampling from a probability distribution. By constructing a Markov chain that has the desired distribution as its equilibrium distribution, one can obtain a sample of the desired distribution by recording states from the chain. The more steps are included, the more closely the distribution of the sample matches the actual desired distribution. This is how the posterior distribution is obtained from the prior in Bayesian regression.
+
+## Gibbs Sampler
+An MCMC algorithm for sampling for a multivariate distribution when sampling from joint distribution (getting a pair of x and y values) is difficult but conditional distibution sampling (x when y or y when x) is simple. Procedure: 1) Initialize some x,y value from data. 2) Keep y fixed, change new x. 3) Sample new y given fixed x from step 2. 4) Repeat until all data points have been sampled. 
+
+## Finley Wilkinson Regression
+Assesses how expected G performance varies as a function of the environment. Achieved by regressing the performance of each genotype on the environment mean.
+
+# Step 0: Install Package
+```{r setup}
+
+library(devtools)
+install_github("lian0090/FW")
+library(FW)
+library(coda)
+library(tidyverse)
+library(ggplot2)
+library(MASS)
+
+```
+
+## Step 0.1: Test package
+http://nitro.biosci.arizona.edu/zbook/newvolume_2/pdf/Chapter44.pdf  
+https://rpubs.com/alice_macqueen/Field_FW_GxE_Analysis_2018  
+https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4777122/#box1  
+https://www.semanticscholar.org/paper/FW%3A-An-R-Package-for-Finlay–Wilkinson-Regression-Lian-Campos/1510be011253057cbd80476a0edbee70b503df9b
+
+```{r test_data}
+
+# Load test data from FW package
+data(wheat)
+
+#The database is attached to the R search path. This means that the database is searched by R when evaluating a variable, so objects in the database can be accessed by simply giving their names.
+attach(wheat.Y)
+
+# Ordinary Least Squares Method
+OLS <- FW(y = y,VAR = VAR,ENV = ENV,method="OLS")
+
+# Bayesian FW regression assuming independence of lines and of environments
+GibbsI = FW(y = y,VAR = VAR,ENV = ENV, method="Gibbs",seed = 12345,saveAt="GibbsI",nIter =
+50000 ,burnIn = 5000)
+
+# Bayesian FW regression that incorporates genomic information 
+GibbsA = FW(y = y,VAR = VAR,ENV = ENV, method="Gibbs",A = wheat.G,seed = 12345, saveAt="GibbsA",nIter = 50000,burnIn = 5000) 
+
+# The fitness of the models can be examined by the correlations between the observed values and the fitted values 
+cor(y,OLS$yhat) 
+cor(y,GibbsI$yhat)
+cor(y,GibbsA$yhat)
+
+# The correlations among parameter estimates from different models
+cor(OLS$b,GibbsI$b)
+cor(OLS$b,GibbsA$b)
+cor(GibbsI$b,GibbsA$b)
+
+# Plot of variety performance vs. estimated environment values. Each line represents a different variety. Lines are fitted values and points are the cell means of genotype and environment combination. The horizontal axis displays the estimated environmental effects. The labels of these environments are also displayed; these labels can be removed by setting ENVlabel = F.
+
+plot.FW(OLS, main="OLS", cex = 0.2,lwd = 0.2)
+plot.FW(GibbsA,main="GibbsA", cex = 0.2,lwd = 0.2)
+
+```
+
+
+# Step 1: Finley Wilkinson on AUPC
+Not included in paper
+```{r eval=FALSE}
+
+# Load data
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+
+# Subset into AUPC data only
+c_AUPC <- c[, c(1, 30:35)]
+
+# Filter out genotypes with rep count < 5
+c_AUPC <- c_AUPC %>%
+  group_by(Genotype) %>%
+  mutate(rep_count = n()) %>%
+  ungroup() %>%
+  filter(rep_count > 4) 
+
+# Convert back to data frame
+c_AUPC <- as.data.frame(c_AUPC)
+
+# Remove NA
+c_area <- na.omit(c_AUPC)
+
+# Make empty date frame
+area_FW_b <- data.frame()
+area_FW_yhat <- data.frame()
+
+# For each column with point data
+for (i in 7:7){
+  
+  print(i)
+  
+  # Set model
+  GibbsI = FW(y = c_area[,i],VAR = c_area$Genotype,ENV = c_area$Year, method="Gibbs",seed=12345,saveAt="GibbsI",nIter = 50000 ,burnIn = 5000)
+  
+  # Genotype Slope
+  b <- data.frame(GibbsI$b)
+  colnames(b) <- "b"
+
+  # Predicted y values
+  yhat <- data.frame(GibbsI$yhat)
+  colnames(yhat) <- "yhat"
+
+  # Observed y values
+  y <- data.frame(GibbsI$y)
+  colnames(y) <- "y"
+  
+  # Genotype
+  g <- c_area$Genotype
+  
+  # Year
+  year <- c_area$Year
+  
+  # Add column with data date to both data frames
+  GDD <- colnames(c_area[i]) # Save as object
+  b$GDD <- GDD
+  
+  yhat$year <- year
+  yhat$Genotype <- g
+  yhat$y <- y
+  yhat$GDD <- GDD
+  
+  # Keep saving to original empty data frame
+  area_FW_b <- rbind(area_FW_b, b)  
+  area_FW_yhat <- rbind(area_FW_yhat, yhat)
+}
+
+# Format slope data
+# Change Genotype to index to own column
+area_FW_b  <- tibble::rownames_to_column(area_FW_b, "Genotype")
+
+# Save results
+write.csv(area_FW_b, "/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/FW/results/FW_AUPC_b.csv", row.names = FALSE)
+
+# Format yhat data
+y_yhat <- area_FW_yhat
+
+#Unnest y list from data frame
+y_yhat <- unnest(y_yhat, cols = 4)
+
+# Save results
+write.csv(y_yhat, "/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/FW/results/FW_AUPC_y.csv", row.names = FALSE)
+
+## AUPC FW Stats
+AUPC_FW <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/FW/results/FW_AUPC_b.csv")
+
+stats <- AUPC_FW %>%
+  mutate(b = b + 1) %>%
+  summarise(meanFW = round(mean(b, na.rm = TRUE), 3),
+            SDFW = round(sd(b, na.rm = TRUE), 3),
+            CVFW = round(cv(b, na.rm = TRUE), 3),
+            maxFW = round(max(b), 3),
+            minFW = round(min(b, na.rm = TRUE), 3))
+```
+
+# Step 2: Finley Wilkinson on Point
+```{r eval=FALSE}
+
+# Load data
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+
+# Subset into point
+c_point_total <- c[, 1:34]
+
+# Make empty date frame
+point_FW_b <- data.frame()
+point_FW_yhat <- data.frame()
+
+# For each column with point data
+for (i in 2:29){ #2:29
+  
+   # Make new data farme
+  c_point <- c_point_total[,c(1, i, 30:34)]
+  
+  # Remove missing
+  c_point <- na.omit(c_point)
+  
+  # Filter genotypes with less than 5 reps
+  c_point <- c_point %>%
+  group_by(Genotype) %>%
+  mutate(rep_count = n()) %>%
+  ungroup() %>%
+  filter(rep_count > 4) 
+  
+  # Make sure data is in data frame form
+  c_point <- as.data.frame(c_point)
+  
+  print(i)
+  
+  # Set model
+  GibbsI = FW(y = c_point[,2],VAR = c_point$Genotype,ENV = c_point$Year, method="Gibbs",seed=12345,saveAt="GibbsI",nIter = 50000 ,burnIn = 5000)
+  
+  # Genotype Slope
+  b <- data.frame(GibbsI$b)
+  colnames(b) <- "b"
+  
+  b <- tibble::rownames_to_column(b, "Genotype")
+
+  # Predicted y values
+  yhat <- data.frame(GibbsI$yhat)
+  colnames(yhat) <- "yhat"
+
+  # Observed y values
+  y <- data.frame(GibbsI$y)
+  colnames(y) <- "y"
+  
+  # Genotype
+  g <- c_point$Genotype
+  
+  # Year
+  year <- c_point$Year
+  
+  # Add column with data date to both data frames
+  
+  GDD <- colnames(c_point[2]) # Save as object
+  b$GDD <- GDD
+
+  yhat$year <- year
+  yhat$Genotype <- g
+  yhat$y <- y
+  yhat$GDD <- GDD
+  
+  # Keep saving to original empty data frame
+  point_FW_b <- rbind(point_FW_b, b)  
+  point_FW_yhat <- rbind(point_FW_yhat, yhat)
+  
+}
+
+# Give unique indentifiers and pivot wide
+b_wide <- point_FW_b %>%
+  tidyr::pivot_wider(names_from = GDD, values_from = b) 
+
+# Save results
+write.csv(b_wide, "/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/FW/results/FW_point_b.csv", row.names = FALSE)
+
+# Format yhat data
+y_yhat <- point_FW_yhat
+
+#Unnest y list from data frame
+y_yhat <- unnest(y_yhat, cols = 4)
+
+# Save results
+write.csv(y_yhat, "/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/FW/results/FW_point_y.csv", row.names = FALSE)
+
+############ Stats for % CC ##################
+point_FW <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/FW/results/FW_point_b.csv", check.names = FALSE)
+
+# Pivot long
+point_FW_longer <- point_FW %>%
+  pivot_longer(cols = c(2:29), names_to = "GDD", values_to = "FW")
+
+# Change GDD to numeric
+point_FW_longer$GDD <- as.numeric(point_FW_longer$GDD)
+
+## Average FW at each GDD
+supf4 <- point_FW_longer %>%
+  group_by(GDD) %>%
+  mutate(FW = FW + 1)  %>%
+  summarise(meanFW = round(mean(FW, na.rm = TRUE), 3),
+            SDFW = round(sd(FW, na.rm = TRUE), 3),
+            CVFW = round(cv(FW, na.rm = TRUE), 3),
+            maxFW = round(max(FW, na.rm = TRUE), 3),
+            minFW = round(min(FW, na.rm = TRUE), 3))
+
+## Average FW at each Growth Stage
+point_FW_longer %>%
+  mutate(Stage = case_when(GDD %in% c(seq(300,450)) ~ "Juv.",
+                           GDD %in% c(seq(500,1100)) ~ "Adult",
+                           GDD %in% c(seq(1150,1650)) ~"Rep.")) %>%
+  group_by(Stage) %>%
+  mutate(FW = FW + 1) %>%
+  summarise(meanFW = round(mean(FW, na.rm = TRUE), 3),
+            SDFW = round(sd(FW, na.rm = TRUE), 3),
+            CVFW = round(cv(FW, na.rm = TRUE), 3),
+            maxFW = round(max(FW, na.rm = TRUE), 3),
+            minFW = round(min(FW, na.rm = TRUE), 3))
+
+```
+
+# Step 3: Finley Wilkinson on Slope
+```{r eval=FALSE}
+
+# Load data
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+
+# Subset into slope
+c_slope_total <- c[, c(1, 30:34, 36:62)]
+
+# Make empty date frame
+slope_FW_b <- data.frame()
+slope_FW_yhat <- data.frame()
+
+# For each column with slope data
+for (i in 7:33){ #2:29
+  
+   # Make new data farme
+  c_slope <- c_slope_total[,c(1:6, i)]
+  
+  # Remove missing
+  c_slope <- na.omit(c_slope)
+  
+  # Filter genotypes with less than 5 reps
+  c_slope <- c_slope %>%
+  group_by(Genotype) %>%
+  mutate(rep_count = n()) %>%
+  ungroup() %>%
+  filter(rep_count > 4) 
+  
+  # Make sure data is in data frame form
+  c_slope <- as.data.frame(c_slope)
+  
+  print(i)
+  
+  # Set model
+  GibbsI = FW(y = c_slope[,7],VAR = c_slope$Genotype,ENV = c_slope$Year, method="Gibbs",seed=12345,saveAt="GibbsI",nIter = 50000 ,burnIn = 5000)
+  
+  # Genotype Slope
+  b <- data.frame(GibbsI$b)
+  colnames(b) <- "b"
+  
+  b <- tibble::rownames_to_column(b, "Genotype")
+
+  # Predicted y values
+  yhat <- data.frame(GibbsI$yhat)
+  colnames(yhat) <- "yhat"
+
+  # Observed y values
+  y <- data.frame(GibbsI$y)
+  colnames(y) <- "y"
+  
+  # Genotype
+  g <- c_slope$Genotype
+  
+  # Year
+  year <- c_slope$Year
+  
+  # Add column with data date to both data frames
+  
+  GDD <- colnames(c_slope[7]) # Save as object
+  b$GDD <- GDD
+
+  yhat$year <- year
+  yhat$Genotype <- g
+  yhat$y <- y
+  yhat$GDD <- GDD
+  
+  # Keep saving to original empty data frame
+  slope_FW_b <- rbind(slope_FW_b, b)  
+  slope_FW_yhat <- rbind(slope_FW_yhat, yhat)
+  
+}
+
+# Give unique indentifiers and pivot wide
+b_wide <- slope_FW_b %>%
+  tidyr::pivot_wider(names_from = GDD, values_from = b) 
+
+# Save results
+write.csv(b_wide, "/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/FW/results/FW_slope_b.csv", row.names = FALSE)
+
+# Format yhat data
+y_yhat <- slope_FW_yhat
+
+#Unnest y list from data frame
+y_yhat <- unnest(y_yhat, cols = 4)
+
+# Save results
+write.csv(y_yhat, "/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/FW/results/FW_slope_y.csv", row.names = FALSE)
+
+##### Slope FW Stats #######
+slope_FW <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/FW/results/FW_slope_b.csv", check.names = FALSE)
+
+# For each GDD
+stats <- slope_FW %>%
+  pivot_longer(cols = 2:28, names_to = "GDD", values_to = "FW") %>%
+  mutate(FW = FW +1,
+         GDD = as.numeric(GDD)) %>%
+  group_by(GDD) %>%
+summarise(meanFW = round(mean(FW, na.rm = TRUE), 3),
+            SDFW = round(sd(FW, na.rm = TRUE), 3),
+            CVFW = round(cv(FW, na.rm = TRUE), 3),
+            maxFW = round(max(FW, na.rm = TRUE), 3),
+            minFW = round(min(FW, na.rm = TRUE), 3))
+
+#For each growth stage
+# Add Phase
+juvenile <- c("300-350", "350-400", "400-450")
+adult <- c("450-500", "500-550", "550-600", "600-650", "650-700", "700-750",  "750-800",  "800-850",  "850-900",  "900-950",  "950-1000",  "1000-1050", "1050-1100",  "1100-1150")
+reproductive <- c("1150-1200",  "1200-1250",  "1250-1300",  "1300-1350",  "1350-1400",  "1400-1450",  "1450-1500",  "1500-1550",  "1550-1600",  "1600-1650")
+
+# Average, Max, Min, and SD Slope of each Growth Stage
+stats <- slope_FW %>%
+  pivot_longer(cols = 2:28, names_to = "GDD", values_to = "FW") %>%
+  mutate(FW = FW +1,
+    GDD = case_when(
+      GDD == "1" ~ "300-350",
+      GDD == "2" ~ "350-400",
+      GDD == "3" ~ "400-450",
+      GDD == "4" ~ "450-500",
+      GDD == "5" ~ "500-550",
+      GDD == "6" ~ "550-600",
+      GDD == "7" ~ "600-650",
+      GDD == "8" ~ "650-700",
+      GDD == "9" ~ "700-750",
+      GDD == "10" ~ "750-800",
+      GDD == "11" ~ "800-850",
+      GDD == "12" ~ "850-900",
+      GDD == "13" ~ "900-950",
+      GDD == "14" ~ "950-1000",
+      GDD == "15" ~ "1000-1050",
+      GDD == "16" ~ "1050-1100",
+      GDD == "17" ~ "1100-1150",
+      GDD == "18" ~ "1150-1200",
+      GDD == "19" ~ "1200-1250",
+      GDD == "20" ~ "1250-1300",
+      GDD == "21" ~ "1300-1350",
+      GDD == "22" ~ "1350-1400",
+      GDD == "23" ~ "1400-1450",
+      GDD == "24" ~ "1450-1500",
+      GDD == "25" ~ "1500-1550",
+      GDD == "26" ~ "1550-1600",
+      GDD == "27" ~ "1600-1650")
+  ) %>% 
+  mutate(Stage = case_when(GDD %in% juvenile ~ "Juvenile",
+                           GDD %in% adult ~ "Adult",
+                           GDD %in% reproductive ~"Reproductive")) %>%
+  group_by(Stage) %>%
+summarise(meanFW = round(mean(FW, na.rm = TRUE), 3),
+            SDFW = round(sd(FW, na.rm = TRUE), 3),
+            CVFW = round(cv(FW, na.rm = TRUE), 3),
+            maxFW = round(max(FW, na.rm = TRUE), 3),
+            minFW = round(min(FW, na.rm = TRUE), 3))
+
+```
+
+## Step 4: Finley Wilkinson on AVS
+Not included in paper
+```{r eval=FALSE}
+# Load data
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+
+# Subset into AUPC data only
+c_expslope <- c[, c(1, 30:34, 63)]
+
+# Filter out genotypes with rep count < 5
+c_expslope <- c_expslope %>%
+  group_by(Genotype) %>%
+  mutate(rep_count = n()) %>%
+  ungroup() %>%
+  filter(rep_count > 4) 
+
+c_expslope %>%
+  summarise(n_distinct(Genotype))
+
+# Code testing if scale of original trait changes range of slope values
+# Multiplying exp slope by 10000 changes FW slopes to range from -.8 - .8 but does not change relative order of genotypes (top and bottom stay ~about the same, some small variation in order but not by a lot)
+
+# 10/13 multiple by 100 (not done in initial step during loess, to see if that affects FW scale)
+c_expslope$Exp <- c_expslope$Exp * 100
+
+# Convert back to data frame
+c_expslope <- as.data.frame(c_expslope)
+
+# Remove NA
+c_expslope <- na.omit(c_expslope)
+
+# Make empty date frame
+expslope_FW_b <- data.frame()
+expslope_FW_yhat <- data.frame()
+
+# For each column with point data
+for (i in 7:7){
+  
+  print(i)
+  
+  # Set model
+  GibbsI = FW(y = c_expslope[,i],VAR = c_expslope$Genotype,ENV = c_expslope$Year, method="Gibbs",seed=12345,saveAt="GibbsI",nIter = 50000 ,burnIn = 5000)
+  
+  # Genotype Slope
+  b <- data.frame(GibbsI$b)
+  colnames(b) <- "b"
+
+  # Predicted y values
+  yhat <- data.frame(GibbsI$yhat)
+  colnames(yhat) <- "yhat"
+
+  # Observed y values
+  y <- data.frame(GibbsI$y)
+  colnames(y) <- "y"
+  
+  # Genotype
+  g <- c_expslope$Genotype
+  
+  # Year
+  year <- c_expslope$Year
+  
+  # Add column with data date to both data frames
+  GDD <- colnames(c_expslope[i]) # Save as object
+  b$GDD <- GDD
+  
+  yhat$year <- year
+  yhat$Genotype <- g
+  yhat$y <- y
+  yhat$GDD <- GDD
+  
+  # Keep saving to original empty data frame
+  expslope_FW_b <- rbind(expslope_FW_b, b)  
+  expslope_FW_yhat <- rbind(expslope_FW_yhat, yhat)
+}
+
+# Format slope data
+# Change Genotype to index to own column
+expslope_FW_b  <- tibble::rownames_to_column(expslope_FW_b, "Genotype")
+
+# Save results
+write.csv(expslope_FW_b, "/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/FW/results/FW_AVS_b.csv", row.names = FALSE)
+
+# Format yhat data
+y_yhat <- expslope_FW_yhat
+
+#Unnest y list from data frame
+y_yhat <- unnest(y_yhat, cols = 4)
+
+# Save results
+write.csv(y_yhat, "/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/FW/results/FW_AVS_y.csv", row.names = FALSE)
+
+## AVS FW Stats
+AVS_FW <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/FW/results/FW_AVS_b.csv")
+
+stats <- AVS_FW %>%
+  mutate(b = b + 1) %>%
+  summarise(meanFW = round(mean(b, na.rm = TRUE), 3),
+            SDFW = round(sd(b, na.rm = TRUE), 3),
+            CVFW = round(cv(b, na.rm = TRUE), 3),
+            maxFW = round(max(b), 3),
+            minFW = round(min(b, na.rm = TRUE), 3))
+```
+
+
+
+
+

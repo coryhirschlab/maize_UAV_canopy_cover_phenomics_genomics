@@ -1,0 +1,477 @@
+---
+title: "Percent Explained Variance (PEV)"
+author: "Julian Cooper"
+date: "11/09/2023"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+## Step 0: Load packages
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(agricolae)
+library(tibble)
+library(ggstream)
+library(RColorBrewer)
+library(lme4) # For random effects model
+
+```
+
+## Step 1: PEV for AUPC
+Not used in paper
+```{r}
+
+# Load data
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+
+# Subset into AUPC
+c_AUPC <- c[, c(1, 30:35)]
+
+# Check structure
+str(c_AUPC)
+c_AUPC$Rep <- as.factor(c_AUPC$Rep)
+c_AUPC$Block <- as.factor(c_AUPC$Block)
+c_AUPC$Genotype <- as.factor(c_AUPC$Genotype)
+c_AUPC$Year <- as.factor(c_AUPC$Year)
+str(c_AUPC)
+
+# Omit NA
+c_AUPC <- c_AUPC %>%
+  drop_na()
+
+# Fit model
+m1 <- lm(AUPC ~ Genotype + Year + Rep%in%Year + Genotype*Year + Block%in%Rep%in%Year, data = c_AUPC)
+anova(m1)   
+
+# Find Sum of Square Error
+sse <- sum((fitted(m1) - c_AUPC$AUPC)^2)
+# Find Sum of Squares Regression
+ssr <- sum((fitted(m1) - mean(c_AUPC$AUPC))^2)
+# Find Sum of Squares Total
+sst <- ssr + sse
+
+# Calculate percent explained variance by dividing factor sum of squares by total sum of squares
+genotype_PEV <- anova(m1)['Sum Sq'][1,1]/sst
+year_PEV <- anova(m1)['Sum Sq'][2,1]/sst
+rep_PEV <- anova(m1)['Sum Sq'][3,1]/sst
+GE_PEV <- anova(m1)['Sum Sq'][4,1]/sst
+block_PEV <- anova(m1)['Sum Sq'][5,1]/sst
+residual_PEV <- anova(m1)['Sum Sq'][6,1]/sst
+
+# Create lists of PEV
+PEV <- c(genotype_PEV, year_PEV, rep_PEV, GE_PEV, block_PEV, residual_PEV)
+
+# Create list of factor names
+Factor <- c("genotype", "year", "rep", "GE", "block", "residual")
+
+# Combine data frame
+AUPC_PEV <- data.frame(PEV, Factor)
+
+# Change column structure
+AUPC_PEV$Factor <- as.factor(AUPC_PEV$Factor)  
+
+# Reorder factors
+AUPC_PEV$Factor <- ordered(AUPC_PEV$Factor, levels = c("genotype", "year", "GE", "rep", "block", "residual"))
+
+# Save data
+write.csv(AUPC_PEV, "/Users/jcooper/Desktop/thesis_research/canopy_cover/3_percent_variance/results/AUPC_PEV.csv", row.names = FALSE)
+
+# Plot PEV of all factors
+cbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+ggplot(AUPC_PEV, aes(x=Factor, y = PEV, fill = Factor)) + 
+  geom_bar(position="dodge", stat="identity") +
+  scale_fill_manual(values=cbPalette)
+
+```
+
+## Step 2: PEV for Adult Vegetative growth rate
+Not used in paper
+```{r}
+
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+
+# Subset into AVS
+c_AVS <- c[, c(1, 30:34, 63)]
+
+# Check structure
+c_AVS$Rep <- as.factor(c_AVS$Rep)
+c_AVS$Block <- as.factor(c_AVS$Block)
+c_AVS$Genotype <- as.factor(c_AVS$Genotype)
+c_AVS$Year <- as.factor(c_AVS$Year)
+str(c_AVS)
+
+# Omit NA
+c_AVS <- c_AVS %>%
+  drop_na()
+
+# Fit model
+m1 <- lm(AVS ~ Genotype + Year + Rep%in%Year + Genotype*Year + Block%in%Rep%in%Year, data = c_AVS)
+anova(m1)   
+
+# Find Sum of Square Error
+sse <- sum((fitted(m1) - c_AVS$AVS)^2)
+# Find Sum of Squares Regression
+ssr <- sum((fitted(m1) - mean(c_AVS$AVS))^2)
+# Find Sum of Squares Total
+sst <- ssr + sse
+
+# Calculate percent Explained variance by dividing factor sum of squares by total sum of squares
+genotype_PEV <- anova(m1)['Sum Sq'][1,1]/sst
+year_PEV <- anova(m1)['Sum Sq'][2,1]/sst
+rep_PEV <- anova(m1)['Sum Sq'][3,1]/sst
+GE_PEV <- anova(m1)['Sum Sq'][4,1]/sst
+block_PEV <- anova(m1)['Sum Sq'][5,1]/sst
+residual_PEV <- anova(m1)['Sum Sq'][6,1]/sst
+
+# Make new data frame
+PEV <- c(genotype_PEV, year_PEV, rep_PEV, GE_PEV, block_PEV, residual_PEV)
+Factor <- c("genotype", "year", "rep", "GE", "block", "residual")
+AVS_PEV <- data.frame(PEV, Factor)
+
+# Change column structure
+AVS_PEV$Factor <- as.factor(AVS_PEV$Factor)  
+
+# Reorder factors
+AVS_PEV$Factor <- ordered(AVS_PEV$Factor, levels = c("genotype", "year", "GE", "rep", "block", "residual"))
+
+# Save data
+write.csv(AVS_PEV, "/Users/jcooper/Desktop/thesis_research/canopy_cover/3_percent_variance/results/AVS_PEV.csv", row.names = FALSE)
+
+# Plot
+cbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+ggplot(AVS_PEV, aes(x=Factor, y = PEV, fill = Factor)) + geom_bar(position="dodge", stat="identity") +
+  scale_fill_manual(values=cbPalette)
+
+```
+
+## Step 3: PEV loop for % canopy cover at 50 GDD intervals
+```{r point}
+
+### Takes a long time to run. Comment out when knitting Markdown #####
+# Load data frame
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+
+# Make empty date frame
+point_PEV <- data.frame()
+
+# For each column with point data
+for (i in 2:29){
+
+  # Subset into point data
+  c_point <- c[, 1:34]
+
+  # Response = column i
+  c_point <- c[, c(1, i, 30:34)]
+
+  # Set all experimental design parameters as factors
+  c_point$Block <- as.factor(c_point$Block)
+  c_point$Genotype <- as.factor(c_point$Genotype)
+  c_point$Year <- as.factor(c_point$Year)
+  c_point$Rep <- as.factor(c_point$Rep)
+
+  # Omit NA
+  c_point <- c_point %>%
+  drop_na()
+
+  # Set model
+  m1 <- lm(c_point[,2] ~ Genotype + Year + Rep%in%Year + Genotype*Year + Block%in%Rep%in%Year, data = c_point)
+anova(m1)
+  
+  # Find Sum of Square Error
+  sse <- sum((fitted(m1) - c_point[,2])^2)
+
+  # Find Sum of Squares Regression
+  ssr <- sum((fitted(m1) - mean(c_point[,2]))^2)
+
+  # Find Sum of Squares Total
+  sst <- ssr + sse
+
+  # Calculate % explained variance for each regressor
+  genotype_PEV <- anova(m1)['Sum Sq'][1,1]/sst
+  year_PEV <- anova(m1)['Sum Sq'][2,1]/sst
+  rep_PEV <- anova(m1)['Sum Sq'][3,1]/sst
+  GE_PEV <- anova(m1)['Sum Sq'][4,1]/sst
+  block_PEV <- anova(m1)['Sum Sq'][5,1]/sst
+  residual_PEV <- anova(m1)['Sum Sq'][6,1]/sst
+
+  # Make object with GDD from column i
+  GDD <- colnames(c_point[2])
+
+  # Make list of PEV for each regressor
+  PEV <- c(genotype_PEV, year_PEV, rep_PEV, GE_PEV, block_PEV, residual_PEV)
+
+  # Make list of regressor names
+  Factor <- c("Genotype", "Year", "Replication", "GxE", "Block", "Residual")
+
+  # Combine GDD, PEV, and factor into data frame
+  i_PEV <- data.frame(GDD, PEV, Factor)
+
+  # Merge each individual data frame for column i into master dataframe
+  point_PEV <- rbind(point_PEV, i_PEV)
+}
+
+write.csv(point_PEV, "/Users/jcooper/Desktop/thesis_research/canopy_cover/3_percent_variance/results/point_PEV.csv", row.names = FALSE)
+
+point_PEV <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/3_percent_variance/results/point_PEV.csv", check.names = FALSE)
+
+# Pivot wide
+point_PEV_wide <- point_PEV %>%
+  mutate(PEV = PEV * 100) %>%
+  pivot_wider(names_from = Factor, values_from = PEV)
+
+# Change column structure
+point_PEV$GDD <- as.numeric(point_PEV$GDD)  
+point_PEV$Factor <- as.factor(point_PEV$Factor)  
+
+# Reorder factors
+point_PEV$Factor <- ordered(point_PEV$Factor, levels = c("Genotype", "Year", "GxE", "Replication", "Block", "Residual"))
+
+# Plot
+cbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+ggplot(point_PEV, aes(x = GDD, y = PEV, fill = Factor)) +
+  geom_stream(type = "proportional", color = 1, lwd = 0.25) +
+  scale_fill_manual(values=cbPalette)
+
+############ Stats for % CC ##################
+
+## Average PVE at each Stage
+x <- point_PEV %>%
+  mutate(Stage = case_when(GDD %in% c(seq(300,450)) ~ "Juv.",
+                           GDD %in% c(seq(500,1100)) ~ "Adult",
+                           GDD %in% c(seq(1150,1650)) ~"Rep.")) %>%
+  group_by(Stage, Factor) %>%
+  mutate(PEV = PEV * 100) %>%
+  summarise(mean = round(mean(PEV, na.rm = TRUE), 3))
+
+x <- x %>% pivot_wider(names_from = Factor, values_from = mean)
+
+```
+
+## Step 4: PEV loop for rate of canopy increase between 50 GDD intervals 
+```{r slope}
+
+### Takes a long time to run. Comment out when knitting Markdown #####
+
+# # Load data frame
+# c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+# 
+# # Make empty date frame
+# slope_PEV <- data.frame()
+# 
+# # For each column with slope data
+# for (i in 7:33){
+# 
+#   # Subset into slope data
+#   c_slope <- c[, c(1, 30:34, 36:62)]
+#   
+#   # Response = column i
+#   c_slope <- c_slope[, c(1:6, i)]
+#   
+#   # Set all experimental design parameters as factors
+#   c_slope$Block <- as.factor(c_slope$Block)
+#   c_slope$Genotype <- as.factor(c_slope$Genotype)
+#   c_slope$Year <- as.factor(c_slope$Year)
+#   c_slope$Rep <- as.factor(c_slope$Rep)
+#   
+#   # Omit NA
+#   c_slope <- c_slope %>%
+#   drop_na()
+# 
+#   # Set model
+#   m1 <- lm(c_slope[,7] ~ Genotype + Year + Rep%in%Year + Genotype*Year + Block%in%Rep%in%Year, data = c_slope)
+#   
+#   # Find Sum of Square Error
+#   sse <- sum((fitted(m1) - c_slope[,7])^2)
+# 
+#   # Find Sum of Squares Regression
+#   ssr <- sum((fitted(m1) - mean(c_slope[,7]))^2)
+# 
+#   # Find Sum of Squares Total
+#   sst <- ssr + sse
+#   
+#   # Calculate % explained variance for each regressor
+#   genotype_PEV <- anova(m1)['Sum Sq'][1,1]/sst
+#   year_PEV <- anova(m1)['Sum Sq'][2,1]/sst
+#   rep_PEV <- anova(m1)['Sum Sq'][3,1]/sst
+#   GE_PEV <- anova(m1)['Sum Sq'][4,1]/sst
+#   block_PEV <- anova(m1)['Sum Sq'][5,1]/sst
+#   residual_PEV <- anova(m1)['Sum Sq'][6,1]/sst
+#   
+#   # Make object with GDD from column i
+#   GDD <- colnames(c_slope[7])
+#   
+#   # Make list of PEV for each regressor
+#   PEV <- c(genotype_PEV, year_PEV, rep_PEV, GE_PEV, block_PEV, residual_PEV)
+#   
+#   # Make list of regressor names
+#   Factor <- c("Genotype", "Year", "Replication", "GxE", "Block", "Residual")
+#   
+#   # Combine GDD, PEV, and factor into data frame
+#   i_PEV <- data.frame(GDD, PEV, Factor)
+#   
+#   # Merge each individual data frame for column i into master dataframe
+#   slope_PEV <- rbind(slope_PEV, i_PEV)  
+# }
+# 
+# write.csv(slope_PEV, "/Users/jcooper/Desktop/thesis_research/canopy_cover/3_percent_variance/results/slope_PEV.csv", row.names = FALSE)
+
+slope_PEV <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/3_percent_variance/results/slope_PEV.csv", check.names = FALSE)
+
+slope_pev_wide <- slope_PEV %>%
+  mutate(PEV = PEV * 100) %>%
+  pivot_wider(names_from = Factor, values_from = PEV)
+
+# Change column structure
+slope_PEV$GDD <- as.numeric(slope_PEV$GDD)  
+slope_PEV$Factor <- as.factor(slope_PEV$Factor)  
+
+# Reorder factors
+slope_PEV$Factor <- ordered(slope_PEV$Factor, levels = c("Genotype", "Year", "GxE", "Replication", "Block", "Residual"))
+
+# Plot
+cbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+ggplot(slope_PEV, aes(x = GDD, y = PEV, fill = Factor)) +
+  geom_stream(type = "proportional", color = 1, lwd = 0.25) +
+  scale_fill_manual(values=cbPalette)
+
+## Average PVE at each Stage
+
+# Add Phase
+juvenile <- c("300-350", "350-400", "400-450")
+adult <- c("450-500", "500-550", "550-600", "600-650", "650-700", "700-750",  "750-800",  "800-850",  "850-900",  "900-950",  "950-1000",  "1000-1050", "1050-1100",  "1100-1150")
+reproductive <- c("1150-1200",  "1200-1250",  "1250-1300",  "1300-1350",  "1350-1400",  "1400-1450",  "1450-1500",  "1500-1550",  "1550-1600",  "1600-1650")
+
+# Average, Max, Min, and SD Slope of each Growth Stage
+x <- slope_PEV %>%
+  mutate(
+    GDD = case_when(
+      GDD == "1" ~ "300-350",
+      GDD == "2" ~ "350-400",
+      GDD == "3" ~ "400-450",
+      GDD == "4" ~ "450-500",
+      GDD == "5" ~ "500-550",
+      GDD == "6" ~ "550-600",
+      GDD == "7" ~ "600-650",
+      GDD == "8" ~ "650-700",
+      GDD == "9" ~ "700-750",
+      GDD == "10" ~ "750-800",
+      GDD == "11" ~ "800-850",
+      GDD == "12" ~ "850-900",
+      GDD == "13" ~ "900-950",
+      GDD == "14" ~ "950-1000",
+      GDD == "15" ~ "1000-1050",
+      GDD == "16" ~ "1050-1100",
+      GDD == "17" ~ "1100-1150",
+      GDD == "18" ~ "1150-1200",
+      GDD == "19" ~ "1200-1250",
+      GDD == "20" ~ "1250-1300",
+      GDD == "21" ~ "1300-1350",
+      GDD == "22" ~ "1350-1400",
+      GDD == "23" ~ "1400-1450",
+      GDD == "24" ~ "1450-1500",
+      GDD == "25" ~ "1500-1550",
+      GDD == "26" ~ "1550-1600",
+      GDD == "27" ~ "1600-1650")
+  ) %>% 
+  mutate(Stage = case_when(GDD %in% juvenile ~ "Juvenile",
+                           GDD %in% adult ~ "Adult",
+                           GDD %in% reproductive ~"Reproductive")) %>%
+  group_by(Stage, Factor) %>%
+  mutate(PEV = PEV * 100) %>%
+  summarise(mean = round(mean(PEV, na.rm = TRUE), 3))
+
+x <- x %>% pivot_wider(names_from = Factor, values_from = mean)
+```
+
+## Step 5: Heritability for canopy percent and rate across time
+```{r}
+
+# Load data frame
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+
+# Set all experimental design parameters as factors
+c$Block <- as.factor(c$Block)
+c$Genotype <- as.factor(c$Genotype)
+c$Year <- as.factor(c$Year)
+c$Rep <- as.factor(c$Rep)
+  
+# Make empty date frame
+c_heritability <- data.frame()
+
+# For each column with slope data
+for (i in c(2:29, 36:62)){
+
+  # Display progress
+  print(i)
+  
+  # Response = column i
+  c_temp <- c[, c(1, i, 30:34)]
+
+  # Omit NA
+  c_temp <- c_temp %>%
+  drop_na()
+  
+  # Fit random effects model
+  model.1 <- lmer(c_temp[,2] ~ (1|Genotype) + (1|Year) + (1:Year/Rep) + (1:Year/Rep/Block) + (1|Genotype:Year), data = c_temp, REML = TRUE)
+  
+   # Decreasing stopping tolerances
+#When fitting a model, especially a complex one like a mixed-effects model, an optimization algorithm is used to find the parameter estimates that minimize some measure of discrepancy between the observed data and the model's predictions. This process involves iteratively adjusting the model parameters until a satisfactory solution is reached, i.e., until the optimization algorithm converges.Convergence occurs when the optimization algorithm has sufficiently minimized the discrepancy between the observed data and the model's predictions, typically when the changes in parameter estimates become very small or when the optimization algorithm reaches a pre-defined tolerance level.
+  
+#xtol_abs is the absolute tolerance level for the gradient, which measures how much the optimization algorithm considers changing the parameter estimates in each iteration.
+#ftol_abs is the absolute tolerance level for the parameter estimates themselves. It determines how close the parameter estimates need to be to each other before the optimization algorithm stops iterating.
+#By setting both xtol_abs and ftol_abs to 1e-8, you're specifying a very small tolerance level. This means that the optimization algorithm will continue iterating until both the changes in parameter estimates and the parameter estimates themselves are extremely close to zero.
+  strict_tol <- lmerControl(optCtrl=list(xtol_abs=1e-8, ftol_abs=1e-8))
+  if (all(model.1@optinfo$optimizer=="nloptwrap")) {
+      model <- update(model.1, control=strict_tol)
+      }
+  
+  # Calculate hertiability 
+  model_variances <- as.data.frame(VarCorr(model))
+  
+  # Formula = h2 <- model_variances$vcov[2]/(model_variances$vcov[2]+(model_variances$vcov[1]/5)+(model_variances$vcov[8]/10)) #from Jonathan
+  #  For that section [2] is genotype, [1] is environment, and [8] is residual. 5 in my case was the number of environments and 10 was the number of environments (5) multiplied by the number of reps (2). So for your case you would need to change the code to have     genotype/(genotype+residual/(number of reps)) and the numbers would correspond to your model if that makes sense?
+
+  h2 <- model_variances$vcov[2]/(model_variances$vcov[2]+(model_variances$vcov[3]/4) + (model_variances$vcov[4]/8))
+  out <- capture.output(h2)
+  
+  # Save h2 and GDD
+  herit.temp <- data.frame("GDD" = colnames(c_temp)[2], 
+                           "Heritability" = h2)
+
+  # make a data frame with all the heritabilities
+  c_heritability <- rbind(c_heritability,herit.temp)
+}
+
+write.csv(c_heritability, file = "/Users/jcooper/Desktop/thesis_research/canopy_cover/3_percent_variance/results/point_slope_h.csv", row.names = FALSE)
+
+##### Stats for paper
+
+# load h2 df
+ch <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/3_percent_variance/results/point_slope_h.csv", check.names = FALSE)
+
+# Average h2 of percent CC in each growth stage
+ch %>%
+  filter(GDD >= 300) %>%
+  mutate(Stage = case_when(GDD %in% c(seq(300,450)) ~ "Juv.",
+                           GDD %in% c(seq(500,1100)) ~ "Adult",
+                           GDD %in% c(seq(1150,1650)) ~"Rep.")) %>%
+  group_by(Stage) %>%
+  summarise(mean = round(mean(Heritability, na.rm = TRUE), 3))
+
+# Average h2 of rate CC in each growth stage
+ch %>%
+  filter(GDD < 300) %>%
+  mutate(Stage = case_when(GDD %in% c(seq(1,3)) ~ "Juv.",
+                           GDD %in% c(seq(4,17)) ~ "Adult",
+                           GDD %in% c(seq(18,27)) ~"Rep.")) %>%
+  group_by(Stage) %>%
+  summarise(mean = round(mean(Heritability, na.rm = TRUE), 3))
+
+```
+

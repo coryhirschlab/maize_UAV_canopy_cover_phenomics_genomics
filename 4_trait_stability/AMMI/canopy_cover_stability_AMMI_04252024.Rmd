@@ -1,0 +1,611 @@
+---
+title: "Static Stability: AMMI Model"
+author: "Julian Cooper"
+date: "11/13/2023"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Step 0: Load packages
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(agricolae)
+library(tibble)
+library(metan)
+library(data.table)
+devtools::install_github("ajaygpb/ammistability")
+library(ammistability)
+library(plotly)
+library(hrbrthemes)
+library(heatmaply)
+
+```
+
+# Step 1: AMMI Example and Stability for AUPC
+Not included in paper
+```{r eval=FALSE}
+
+# Load data
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+
+# Subset dataset
+c_AUPC <- c[, c(1, 30:35)]
+
+# Filter out genotypes with rep count < 5
+## Need multiple reps/environments to accurately measure stability
+c_AUPC <- c_AUPC %>%
+  group_by(Genotype) %>%
+  mutate(rep_count = n()) %>%
+  ungroup() %>%
+  filter(rep_count > 4) 
+
+############### AMMI Calculation Examples ##################
+
+# Begin by making model using agricolae method
+# Create model. Block not included, see literature (Gauch, 2012)
+model <- with(c_AUPC,AMMI(Year, Genotype, Rep, AUPC, console=FALSE))
+
+#### The following code is just a small set of examples of the possible AMMI metrics that can be produced. 
+
+#### AMGE Sum Across Environments of GE Interaction
+# AMGE: The AMGE values. The sums across environments of the GEI modeled by AMMI. The lower these parameters, the more stable a genotype is to environments. Based on sum of PC and associated eigenvalues (scalars). 
+#SSI: The computed values of simultaneous selection index for yield and stability.
+#rAMGE: The ranks of AMGE values.
+#rY: The ranks of the mean yield of genotypes.
+#means: The mean yield of the genotypes.
+
+AMGE2 <- AMGE.AMMI(model, n=2) # Forces two PC
+AMGE <- AMGE.AMMI(model) # Uses all significant PC
+AVAMGE <- AVAMGE.AMMI(model) # Takes absolute value, which scales it to correlate with ASV and ASI
+
+#### AMMI Stability Index
+#ASI: The ASI values. Distance between PC1 and PC2. Higher the absolute value, the more specified a genotype is to specific environments. Conversely, lower ASI = more stable genotypes. Modified only uses significant PC.
+#SSI: The computed values of simultaneous selection index for yield and stability.
+#rASI: The ranks of ASI values.
+#rY: The ranks of the mean yield of genotypes.
+#means: The mean yield of the genotypes.
+
+MASI <- MASI.AMMI(model) # Uses all significant PC
+ASI <- ASI.AMMI(model) # Uses first two PC
+
+#### AMMI Stability Value
+#MASV: Sum of square for all significant PC. Modified AMMI Stability value. Unmodified uses first two. Lower is better.
+#SSI: The computed values of simultaneous selection index for yield and stability.
+#rMASV: The ranks of ASI values.
+#rY: The ranks of the mean yield of genotypes.
+#means: The mean yield of the genotypes.
+
+MASV <- MASV.AMMI(model) # Uses all significant PC
+ASV <- index.AMMI(model) # Uses the first two PC
+
+# Check correlation between all possible metrics
+ammistability(model, AMGE = TRUE, ASI = TRUE, ASV = TRUE, ASTAB = FALSE,
+              AVAMGE = TRUE, DA = FALSE, DZ = FALSE, EV = FALSE,
+              FA = FALSE, MASI = TRUE, MASV = TRUE, SIPC = FALSE,
+              ZA = FALSE)
+# Correlation between AVAMGE, MASV, and MASI are highest.
+
+ammistability(model, AMGE = TRUE, ASI = TRUE, ASV = TRUE, ASTAB = TRUE,
+              AVAMGE = TRUE, DA = TRUE, DZ = TRUE, EV = TRUE,
+              FA = TRUE, MASI = TRUE, MASV = TRUE, SIPC = TRUE,
+              ZA = TRUE)
+# All correlations are good except for AMGE, but AVAMGE is in line.
+
+############################################
+
+# Extract results for AUPC AMMI
+# Remove rep_count
+c_AUPC <- c_AUPC[,1:7]
+
+# Change to data frame
+c_AUPC <- as.data.frame(c_AUPC)
+str(c_AUPC)
+
+# Make empty date frame
+area_ammistability <- data.frame()
+
+# For each column with area data
+for (i in 7:7){
+  
+  # set model
+  model <- with(c_AUPC, AMMI(Year, Genotype, Rep, c_AUPC[,i], console=FALSE))
+  
+  # make new data frame
+  area_rubberduck <- data.frame()
+  
+  # Extract GDD
+  GDD <- colnames(c_AUPC[i])
+   
+  #AMMI metrics give the give the following error:
+  # Error in gamma.n %*% diag(lambda.n) %*% t(delta.n) : 
+  # non-conformable arguments
+  ### Happens when there is only one significant PC. Manually set n=2 if code occurs.
+  
+  # Calculate AVAMGE
+  AVAMGE <- try(AVAMGE.AMMI(model))
+  if (class(AVAMGE) == "try-error") { # if error
+    AVAMGE <- AVAMGE.AMMI(model, n=2) # use 2 PC
+  }
+  colnames(AVAMGE) <- c("AVAMGE", "AVAMGE_SSI", "rAVAMGE", "rY", "means") # change columns names
+  AVAMGE  <- tibble::rownames_to_column(AVAMGE, "Genotype") # make row names a new column
+
+  # Calculate MASI
+  MASI <- try(MASI.AMMI(model))
+  if (class(MASI) ==  "try-error") { # if error
+    MASI <- MASI.AMMI(model, n=2) # use 2 PC
+  }
+  colnames(MASI) <- c("MASI", "MASI_SSI", "rMASI", "rY", "means") # change columns names
+  MASI  <- tibble::rownames_to_column(MASI, "Genotype") # make row names a new column
+  
+  # Calculate MASV
+  MASV <- try(MASV.AMMI(model))
+  if (class(MASV) =="try-error") { # if error
+    MASV <- MASV.AMMI(model, n=2) # use 2 PC
+  }
+  colnames(MASV) <- c("MASV", "MASV_SSI", "rMASV", "rY", "means") # change columns names
+  MASV  <- tibble::rownames_to_column(MASV, "Genotype") # make row names a new column
+  
+  # Merge results into new data frame
+  area_rubberduck <- merge(AVAMGE, MASI, by = "Genotype")
+  area_rubberduck <- merge(area_rubberduck, MASV, by = "Genotype")
+  area_rubberduck <- cbind(area_rubberduck, GDD)
+
+  area_ammistability <- rbind(area_ammistability, area_rubberduck)
+
+}
+
+# Clean data frame by removing duplicated columns
+area_ammistability_clean <- area_ammistability[, c(1:9, 12:14, 17)]
+
+# Save data frame
+write.csv(area_ammistability_clean, "/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_AUPC.csv", row.names = FALSE)
+
+## AUPC AVAMGE Stats
+AUPC_ammi <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_AUPC.csv")
+
+stats <- AUPC_ammi %>%
+  summarise(mean = round(mean(AVAMGE, na.rm = TRUE), 3),
+            sd = round(sd(AVAMGE, na.rm = TRUE), 3),
+            CV = round(cv(AVAMGE, na.rm = TRUE), 3),
+            max = round(max(AVAMGE, na.rm = TRUE), 3),
+            min = round(min(AVAMGE, na.rm = TRUE),3))
+```
+
+# Step 2: Ammistability for Point
+```{r eval=FALSE}
+
+# Load data
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+
+# Subset data
+c_point <- c[, 1:34]
+
+# Make empty date frame
+point_ammistability <- data.frame()
+
+# For each column with point data
+for (i in 2:29){ 
+  
+  # Make new data farme
+  c_model <- c_point[,c(1, i, 30:34)]
+  
+  # Remove missing
+  c_model <- na.omit(c_model)
+  
+  # Filter genotypes with less than 5 reps
+  c_model <- c_model %>%
+  group_by(Genotype) %>%
+  mutate(rep_count = n()) %>%
+  ungroup() %>%
+  filter(rep_count > 4) 
+  
+  # Make sure data is in data frame form
+  c_model <- as.data.frame(c_model)
+  #str(c_model)
+  
+  # Set model
+  model2 <- with(c_model,AMMI(Year, Genotype, Rep, c_model[,2], console=FALSE))
+  
+  point_rubberduck <- data.frame() # make new empty data frame
+  
+  GDD <- colnames(c_model[2]) # Extract GDD
+   
+  #AMMI metrics give the give the following error:
+  # Error in gamma.n %*% diag(lambda.n) %*% t(delta.n) : 
+  # non-conformable arguments
+  ### Happens when there is only one significant PC. Manually set n=2 if code occurs.
+  
+  # Calculate AVAMGE, MASI, and MASV, using 2 PC if error
+  AVAMGE <- try(AVAMGE.AMMI(model2))
+  if (class(AVAMGE) == "try-error") {
+    AVAMGE <- AVAMGE.AMMI(model2, n=2)
+  }
+  colnames(AVAMGE) <- c("AVAMGE", "AVAMGE_SSI", "rAVAMGE", "rY", "means")
+  AVAMGE  <- tibble::rownames_to_column(AVAMGE, "Genotype")
+
+  MASI <- try(MASI.AMMI(model2))
+  if (class(MASI) ==  "try-error") {
+    MASI <- MASI.AMMI(model2, n=2)
+  }
+  colnames(MASI) <- c("MASI", "MASI_SSI", "rMASI", "rY", "means")
+  MASI  <- tibble::rownames_to_column(MASI, "Genotype")
+  
+  MASV <- try(MASV.AMMI(model2))
+  if (class(MASV) =="try-error") {
+    MASV <- MASV.AMMI(model2, n=2)
+  }
+  
+  colnames(MASV) <- c("MASV", "MASV_SSI", "rMASV", "rY", "means") # Set column names
+  MASV  <- tibble::rownames_to_column(MASV, "Genotype") # Change row names to column
+  
+  # Merge all and make new data frame
+  point_rubberduck <- merge(AVAMGE, MASI, by = "Genotype")
+  point_rubberduck <- merge(point_rubberduck, MASV, by = "Genotype")
+  point_rubberduck <- cbind(point_rubberduck, GDD)
+
+  point_ammistability <- rbind(point_ammistability, point_rubberduck)
+
+}
+
+# Clean data
+point_ammistability_clean <- point_ammistability[, c(1:9, 12:14, 17)]
+
+# Save data frame
+write.csv(point_ammistability_clean, "/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_point.csv", row.names = FALSE)
+
+############ Stats for % CC ##################
+point_AMMI <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_point.csv")
+point_AMMI <- point_AMMI[,c(2, 13)]
+
+## Average AVAMGE at each GDD
+supf4 <- point_AMMI %>%
+  group_by(GDD) %>%
+  summarise(meanAVAMGE = round(mean(AVAMGE, na.rm = TRUE), 3),
+            SDAVAMGE = round(sd(AVAMGE, na.rm = TRUE), 3),
+            CV = round(cv(AVAMGE, na.rm = TRUE), 3),
+            minAVAMGE = round(min(AVAMGE, na.rm = TRUE), 3),
+            maxAVAMGE = round(max(AVAMGE, na.rm = TRUE), 3))
+
+## Average AVAMGE at each Growth Stage
+point_AMMI %>%
+  mutate(Stage = case_when(GDD %in% c(seq(300,450)) ~ "Juv.",
+                           GDD %in% c(seq(500,1100)) ~ "Adult",
+                           GDD %in% c(seq(1150,1650)) ~"Rep.")) %>%
+  group_by(Stage) %>%
+  summarise(meanAVAMGE = round(mean(AVAMGE, na.rm = TRUE), 3),
+            SDAVAMGE = round(sd(AVAMGE, na.rm = TRUE), 3),
+            CV = round(cv(AVAMGE, na.rm = TRUE), 3),
+            minAVAMGE = round(min(AVAMGE, na.rm = TRUE), 3),
+            maxAVAMGE = round(max(AVAMGE, na.rm = TRUE), 3))
+
+```
+
+# Step 3: Ammistability for Slope
+```{r eval=FALSE}
+
+# Load data
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+
+# Subset data
+c_slope <- c[, c(1, 30:34, 36:62)]
+
+# Make empty date frame
+slope_ammistability <- data.frame()
+
+# For each column with slope data
+for (i in 7:33){
+  
+  c_model <- c_slope[,c(1:6, i)]
+  
+  c_model <- na.omit(c_model)
+  
+  # Filter genotypes with less than 5 reps
+  c_model <- c_model %>%
+  group_by(Genotype) %>%
+  mutate(rep_count = n()) %>%
+  ungroup() %>%
+  filter(rep_count > 4) 
+  
+  # Make sure data is in data frame form
+  c_model <- as.data.frame(c_model)
+  #str(c_model)
+  
+  # Set model
+  model3 <- with(c_model,AMMI(Year, Genotype, Rep, c_model[,7], console=FALSE))
+  
+  slope_rubberduck <- data.frame() # make empty data frame
+  
+  GDD <- colnames(c_model[7]) # extract GDD
+  
+  #AMMI metrics give the give the following error:
+  # Error in gamma.n %*% diag(lambda.n) %*% t(delta.n) : 
+  # non-conformable arguments
+  ### Happens when there is only one significant PC. Manually set n=2 if code occurs.
+  
+  # Calculate AVAMGE, MASI, and MASV, using 2 PC if error
+  
+  AVAMGE <- try(AVAMGE.AMMI(model3))
+  if (class(AVAMGE) == "try-error") {
+    AVAMGE <- AVAMGE.AMMI(model3, n=2)
+  }
+  colnames(AVAMGE) <- c("AVAMGE", "AVAMGE_SSI", "rAVAMGE", "rY", "means")
+  AVAMGE  <- tibble::rownames_to_column(AVAMGE, "Genotype")
+
+  MASI <- try(MASI.AMMI(model3))
+  if (class(MASI) ==  "try-error") {
+    MASI <- MASI.AMMI(model3, n=2)
+  }
+  colnames(MASI) <- c("MASI", "MASI_SSI", "rMASI", "rY", "means")
+  MASI  <- tibble::rownames_to_column(MASI, "Genotype")
+  
+  MASV <- try(MASV.AMMI(model3))
+  if (class(MASV) =="try-error") {
+    MASV <- MASV.AMMI(model3, n=2)
+  }
+  colnames(MASV) <- c("MASV", "MASV_SSI", "rMASV", "rY", "means")
+  MASV  <- tibble::rownames_to_column(MASV, "Genotype")
+
+  # Merge all and make new data frame
+  slope_rubberduck <- merge(AVAMGE, MASI, by = "Genotype")
+  slope_rubberduck <- merge(slope_rubberduck, MASV, by = "Genotype")
+  slope_rubberduck <- cbind(slope_rubberduck, GDD)  
+  
+  slope_ammistability <- rbind(slope_ammistability, slope_rubberduck)
+
+}
+
+# Clean data
+slope_ammistability_clean <- slope_ammistability[, c(c(1:9, 12:14, 17))]
+
+# Save data frame
+write.csv(slope_ammistability_clean, "/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_slope.csv", row.names = FALSE)
+
+## AVS AVAMGE Stats
+slope_ammi <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_slope.csv")
+
+# For each GDD
+stats <- slope_ammi %>%
+  group_by(GDD) %>%
+  summarise(mean = round(mean(AVAMGE, na.rm = TRUE), 3),
+            sd = round(sd(AVAMGE, na.rm = TRUE), 3),
+            CV = round(cv(AVAMGE, na.rm = TRUE), 3),
+            max = round(max(AVAMGE, na.rm = TRUE), 3),
+            min = round(min(AVAMGE, na.rm = TRUE),3))
+
+#For each growth stage
+# Add Phase
+juvenile <- c("300-350", "350-400", "400-450")
+adult <- c("450-500", "500-550", "550-600", "600-650", "650-700", "700-750",  "750-800",  "800-850",  "850-900",  "900-950",  "950-1000",  "1000-1050", "1050-1100",  "1100-1150")
+reproductive <- c("1150-1200",  "1200-1250",  "1250-1300",  "1300-1350",  "1350-1400",  "1400-1450",  "1450-1500",  "1500-1550",  "1550-1600",  "1600-1650")
+
+# Average, Max, Min, and SD Slope of each Growth Stage
+stats <- slope_ammi %>%
+  mutate(
+    GDD = case_when(
+      GDD == "1" ~ "300-350",
+      GDD == "2" ~ "350-400",
+      GDD == "3" ~ "400-450",
+      GDD == "4" ~ "450-500",
+      GDD == "5" ~ "500-550",
+      GDD == "6" ~ "550-600",
+      GDD == "7" ~ "600-650",
+      GDD == "8" ~ "650-700",
+      GDD == "9" ~ "700-750",
+      GDD == "10" ~ "750-800",
+      GDD == "11" ~ "800-850",
+      GDD == "12" ~ "850-900",
+      GDD == "13" ~ "900-950",
+      GDD == "14" ~ "950-1000",
+      GDD == "15" ~ "1000-1050",
+      GDD == "16" ~ "1050-1100",
+      GDD == "17" ~ "1100-1150",
+      GDD == "18" ~ "1150-1200",
+      GDD == "19" ~ "1200-1250",
+      GDD == "20" ~ "1250-1300",
+      GDD == "21" ~ "1300-1350",
+      GDD == "22" ~ "1350-1400",
+      GDD == "23" ~ "1400-1450",
+      GDD == "24" ~ "1450-1500",
+      GDD == "25" ~ "1500-1550",
+      GDD == "26" ~ "1550-1600",
+      GDD == "27" ~ "1600-1650")
+  ) %>% 
+  mutate(Stage = case_when(GDD %in% juvenile ~ "Juvenile",
+                           GDD %in% adult ~ "Adult",
+                           GDD %in% reproductive ~"Reproductive")) %>%
+  group_by(Stage) %>%
+ summarise(mean = round(mean(AVAMGE, na.rm = TRUE), 3),
+            sd = round(sd(AVAMGE, na.rm = TRUE), 3),
+            CV = round(cv(AVAMGE, na.rm = TRUE), 3),
+            max = round(max(AVAMGE, na.rm = TRUE), 3),
+            min = round(min(AVAMGE, na.rm = TRUE),3))
+
+```
+
+# Step 4: Ammistability for AVS
+Not included in paper
+```{r eval=FALSE}
+
+# Load data
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+
+# Subset data
+c_AVS <- c[, c(1, 30:34, 63)]
+
+# Make empty date frame
+AVS_ammistability <- data.frame()
+
+# For each column with slope data
+for (i in 7:7){
+  
+  c_model <- c_AVS[,c(1:6, i)]
+  
+  c_model <- na.omit(c_model)
+  
+  # Filter genotypes with less than 5 reps
+  c_model <- c_model %>%
+  group_by(Genotype) %>%
+  mutate(rep_count = n()) %>%
+  ungroup() %>%
+  filter(rep_count > 4) 
+  
+  # Make sure data is in data frame form
+  c_model <- as.data.frame(c_model)
+  #str(c_model)
+  
+  # Set model
+  model3 <- with(c_model,AMMI(Year, Genotype, Rep, c_model[,7], console=FALSE))
+  
+  slope_rubberduck <- data.frame() # new empty data frame
+  
+  GDD <- colnames(c_model[7]) # extract GDD
+  
+   #AMMI metrics give the give the following error:
+  # Error in gamma.n %*% diag(lambda.n) %*% t(delta.n) : 
+  # non-conformable arguments
+  ### Happens when there is only one significant PC. Manually set n=2 if code occurs.
+  
+  # Calculate AVAMGE, MASI, and MASV, using 2 PC if error
+  
+  AVAMGE <- try(AVAMGE.AMMI(model3))
+  if (class(AVAMGE) == "try-error") {
+    AVAMGE <- AVAMGE.AMMI(model3, n=2)
+  }
+  colnames(AVAMGE) <- c("AVAMGE", "AVAMGE_SSI", "rAVAMGE", "rY", "means")
+  AVAMGE  <- tibble::rownames_to_column(AVAMGE, "Genotype")
+
+  MASI <- try(MASI.AMMI(model3))
+  if (class(MASI) ==  "try-error") {
+    MASI <- MASI.AMMI(model3, n=2)
+  }
+  colnames(MASI) <- c("MASI", "MASI_SSI", "rMASI", "rY", "means")
+  MASI  <- tibble::rownames_to_column(MASI, "Genotype")
+  
+  MASV <- try(MASV.AMMI(model3))
+  if (class(MASV) =="try-error") {
+    MASV <- MASV.AMMI(model3, n=2)
+  }
+  colnames(MASV) <- c("MASV", "MASV_SSI", "rMASV", "rY", "means")
+  MASV  <- tibble::rownames_to_column(MASV, "Genotype")
+  
+  # Merge all and make new data frame
+
+  slope_rubberduck <- merge(AVAMGE, MASI, by = "Genotype")
+  slope_rubberduck <- merge(slope_rubberduck, MASV, by = "Genotype")
+  slope_rubberduck <- cbind(slope_rubberduck, GDD)  
+  
+  AVS_ammistability <- rbind(AVS_ammistability, slope_rubberduck)
+
+}
+
+# Clean data
+AVS_ammistability_clean <- AVS_ammistability[, c(c(1:9, 12:14, 17))]
+
+# Save data frame
+write.csv(AVS_ammistability_clean, "/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_AVS.csv", row.names = FALSE)
+
+## AVS AVAMGE Stats
+AVS_ammi <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_AVS.csv")
+
+stats <- AVS_ammi %>%
+  summarise(mean = round(mean(AVAMGE, na.rm = TRUE), 3),
+            sd = round(sd(AVAMGE, na.rm = TRUE), 3),
+            CV = round(cv(AVAMGE, na.rm = TRUE), 3),
+            max = round(max(AVAMGE, na.rm = TRUE), 3),
+            min = round(min(AVAMGE, na.rm = TRUE),3))
+```
+
+# Step 5: Rank stability of genotypes and compare across traits
+## Step 5A: Merge data
+```{r}
+
+# Load and format all AMMI data frames
+point <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_point.csv")
+point_formatted <- point[,c(1,4,13)]
+point_formatted$Trait <- "Point"
+
+slope <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_slope.csv")
+slope_formatted <- slope[,c(1,4,13)]
+slope_formatted$Trait <- "Slope"
+
+AVS <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_AVS.csv")
+AVS_formatted <- AVS[,c(1,4,13)]
+AVS_formatted$Trait <- "AVS"
+
+AUPC <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_AUPC.csv")
+AUPC_formatted <- AUPC[,c(1,4,13)]
+AUPC_formatted$Trait <- "AUPC"
+
+# Merge df
+AMMI_all <- rbind(point_formatted, slope_formatted, AVS_formatted, AUPC_formatted)
+
+# Add trait-GDD ID
+AMMI_all <- AMMI_all %>%
+  mutate(ID = paste(GDD, Trait, sep = "_")) %>%
+  reframe(Genotype, rAVAMGE, ID)
+
+# Save data frame
+write.csv(AMMI_all, "/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_all.csv", row.names = FALSE)
+
+```
+
+## Step 5B: Genotype stability rank correlations between traits
+```{r}
+
+# Load data
+AMMI_all <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_all.csv")
+
+# Pivot wide
+AMMI_wide <- AMMI_all %>%
+  pivot_wider(names_from = ID, values_from = rAVAMGE)
+
+# Correlations between geno ranks
+AMMI_wide %>%
+  summarise(cor(AUPC_AUPC, `1450_Point`, use = "complete.obs"))
+
+
+```
+
+## Step 5C: How does stability correlate with performance (terminal CC %)?
+```{r}
+
+# Load % CC stability data
+a <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/4_trait_stability/AMMI/results/AMMI_point.csv")
+
+# Get average AMMI for each geno
+## LOW = MORE STABLE. According to Bernardo 2020, more stable should have worse overall trait performance
+ammi_point <- a %>%
+  group_by(Genotype) %>%
+  summarise(avg_AMMI = mean(AVAMGE))
+
+# Load trait data
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+
+# Trim % CC only
+c_point <- c[c(2:29, 32)]
+
+c_point_avg <- c_point %>%
+  pivot_longer(cols = c(1:28), names_to = "GDD", values_to = "CC") %>%
+  group_by(Genotype, GDD) %>%
+  summarise(avg_CC = mean(CC, na.rm = TRUE)) %>%
+  pivot_wider(names_from = "GDD", values_from = "avg_CC")
+
+# Merge
+ammi_c <- merge(ammi_point, c_point_avg, by = "Genotype")
+
+# How does avg stability correlate with terminal CC?
+ammi_c %>%
+  summarise(cor(avg_AMMI, `1450`))
+
+# How does terminal stability correlate with terminal CC?
+a_wide <- a %>%
+  reframe(Genotype, AVAMGE, GDD) %>%
+  pivot_wider(names_from = GDD, values_from = AVAMGE)
+
+cor(a_wide$`1450`, ammi_c$`1450`, use = "complete.obs")
+
+
+
+```

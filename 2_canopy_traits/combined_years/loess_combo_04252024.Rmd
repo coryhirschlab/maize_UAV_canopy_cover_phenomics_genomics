@@ -1,0 +1,458 @@
+---
+title: "Combined Analysis of Loess Data"
+author: "Julian Cooper"
+date: "11/08/23"
+output:
+  html_document: default
+  word_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+# Step 0: Load libraries
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(agricolae)
+library(tibble)
+library(rmarkdown) # For formatting rmarkdown
+library(minpack.lm) # for nlsLM function
+library(cmstatr) # for calculating CV
+
+```
+
+# Step 1: Merge individual year loess files
+All stand counts, weed filtering, and peak/valley parameters updated in the individual year code.
+```{r}
+
+# Load data from each year
+years <- seq(2018,2021) # Get sequence of years
+cc_all_env <- data.frame()
+
+# Loop through each data frame and merge
+for (year in years) {
+  
+  cc_env <- read.csv(paste0("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/", year,"/results/",year,"_loess_CC.csv"), check.names = FALSE)
+  
+  cc_all_env <- rbind(cc_all_env, cc_env)
+}
+
+# Plot growth curves and environmental means
+# Takes a long time to run, keep commented out id doing work in chunk
+cc_all_env %>%
+  # Pivot data frame long
+  pivot_longer(cols = 2:29, names_to = "GDD", values_to = "CC") %>%
+  # Adjust structure
+  mutate(GDD = as.numeric(GDD)) %>%
+  mutate(Years = as.factor(Year)) %>%
+  # Plot
+  ggplot(aes(GDD, CC, color = Year)) +
+  geom_line(aes(group=Plot), color="gray") +
+  stat_smooth(method="loess", formula = y ~ x) +
+  stat_summary(aes(GDD, CC, group = Year, color = Year), geom = 'point', fun = mean, shape = 17, size = 3) +
+  xlab('Growing Degree Day (GDD)') +
+  ylab('Canopy Cover %')
+
+# Save data frame
+write.csv(cc_all_env, "/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/data/data_processing/1loess_combo.csv", row.names = FALSE)
+
+# Pivot long
+cc_all_env_long <- cc_all_env %>%  
+  pivot_longer(cols = 2:29, names_to = "GDD", values_to = "CC")
+  
+# Save long data frame
+write.csv(cc_all_env_long, "/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/data/data_processing/2loess_combo_long.csv", row.names = FALSE)
+
+############ Stats for % CC ##################
+# Load data
+cc_all_env_long <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/data/data_processing/2loess_combo_long.csv")
+
+cc_all_env <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/data/data_processing/1loess_combo.csv")
+
+# EXPERIMENTAL DESIGN
+# Count unique genotypes
+cc_all_env_long %>%
+    summarise(n_distinct(Genotype)) #499
+
+# Count unique genotypes per year
+cc_all_env_long %>%
+  group_by(Year) %>%
+  summarise(n_distinct(Genotype)) %>%
+  ungroup()
+
+# Count plots per year
+cc_all_env %>%
+  group_by(Year) %>%
+  summarise(n=n()) %>%
+  ungroup()
+
+# Average reps per genotype
+cc_all_env %>%
+  group_by(Genotype) %>%
+  mutate(rep_count = n()) %>%
+  ungroup() %>%
+  filter(rep_count < 9) %>% #Filter out PH207, B73, and ND259 check lines
+  summarise(mean(rep_count))
+
+# Tukey T-test for Year
+## Check structure
+cc_all_env$Rep <- as.factor(cc_all_env$Rep)
+cc_all_env$Block <- as.factor(cc_all_env$Block)
+cc_all_env$Genotype <- as.factor(cc_all_env$Genotype)
+cc_all_env$Year <- as.factor(cc_all_env$Year)
+
+## Check statistical differences between years for 1450 GDD, highest shared terminal GDD 
+mod <- aov(cc_all_env[,25] ~ Year, data = cc_all_env)
+mod_means_contr <- emmeans::emmeans(object = mod,
+                                    pairwise ~ "Year",
+                                    adjust = "tukey")
+multcomp::cld(object = mod_means_contr$emmeans,
+                           Letters = letters)
+
+# PERCENT CANOPY COVER
+# Average, Max, Min, and CV % CC of each GDD
+sup_fig_3 <- cc_all_env_long %>%
+  group_by(GDD) %>%
+  mutate(CC = CC * 100) %>%
+  summarise(meanCC = round(mean(CC, na.rm = TRUE), 3),
+            maxCC = round(max(CC, na.rm = TRUE), 3),
+            minCC = round(min(CC, na.rm = TRUE),3),
+            CV = round(cv(CC, na.rm = TRUE), 3),
+            SD = round(sd(CC, na.rm = TRUE), 3))
+
+# Average, Max, Min, and CV % CC of each GDD
+x <- cc_all_env_long %>%
+  mutate(Stage = case_when(GDD %in% c(seq(300,450)) ~ "Juv.",
+                           GDD %in% c(seq(500,1100)) ~ "Adult",
+                           GDD %in% c(seq(1150,1650)) ~"Rep.")) %>%
+  group_by(Stage) %>%
+  mutate(CC = CC * 100) %>%
+  summarise(mean = round(mean(CC, na.rm = TRUE), 3),
+            max = round(max(CC, na.rm = TRUE), 3),
+            min = round(min(CC, na.rm = TRUE),3),
+            CV = round(cv(CC, na.rm = TRUE), 3),
+            SD = round(sd(CC, na.rm = TRUE), 3))
+
+# Tukey T-test for Year 
+## Check structure
+cc_all_env$Rep <- as.factor(cc_all_env$Rep)
+cc_all_env$Block <- as.factor(cc_all_env$Block)
+cc_all_env$Genotype <- as.factor(cc_all_env$Genotype)
+cc_all_env$Year <- as.factor(cc_all_env$Year)
+
+## Check statistical differences between years for ALL GDD
+# Create an empty data frame to store results
+tukey_results_df <- data.frame()
+
+# Loop through values of I
+for (i in 2:29) {
+  # Fit the model
+  mod <- aov(cc_all_env[, i] ~ Year, data = cc_all_env)
+  
+  # Calculate Tukey groups
+  mod_means_contr <- emmeans::emmeans(
+    object = mod,
+    pairwise ~ "Year",
+    adjust = "tukey"
+  )
+  
+  # Get Tukey groups and convert to a data frame
+  tukey_groups <- as.data.frame(multcomp::cld(
+    object = mod_means_contr$emmeans,
+    Letters = letters
+  ))
+  
+  # Add a column to indicate the variable (I value)
+  tukey_groups$I <- i
+  
+  # Append the results to the main data frame
+  tukey_results_df <- rbind(tukey_results_df, tukey_groups)
+}
+
+# Print or view the final data frame
+print(tukey_results_df)
+
+```
+
+# Step 2: Area Under Progress Curve (AUPC)
+Not used in paper
+```{r}
+
+# Load data
+c_full <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/data/data_processing/1loess_combo.csv", check.names = FALSE)
+
+# Only use flights starting at 450 and ending 1450 to keep AUPC even between years
+c <- c_full[,c(1, 5:25, 30:34)]
+
+# Make list of column names to extract dates
+dates <- colnames(c)
+
+# Trim list
+dates <- dates[2:22]
+
+# Change to numeric
+dates <- as.numeric(dates)
+
+# Specify which columns to evaluate
+evaluation <- c[,2:22]
+
+# Calculate AUPC
+AUPC <-audpc(evaluation, dates)
+
+# Change to data frame
+AUPC <- tibble(AUPC)
+
+# Add to "c" data frame
+c_AUPC <- cbind(c_full, AUPC)
+
+# Plot histogram of AUPC
+c_AUPC %>%
+  ggplot(aes(AUPC)) +
+  geom_histogram() +
+  facet_grid(~Year) # Facet by Env.
+
+# Save data
+write.csv(c_AUPC, "/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/data/data_processing/3loess_combo_AUPC.csv", row.names = FALSE)
+
+############ Stats for AUPC ##################
+
+# Mean and SD AUPC
+c_AUPC %>%
+ summarise(mean = round(mean(AUPC, na.rm = TRUE), 3),
+            max = round(max(AUPC, na.rm = TRUE), 3),
+            min = round(min(AUPC, na.rm = TRUE),3),
+            sd = round(sd(AUPC, na.rm = TRUE), 3),
+            CV = round(cv(AUPC, na.rm = TRUE), 3))
+
+# Mean and SD AUPC per year
+c_AUPC %>%
+  group_by(Year) %>%
+  summarise(mean(AUPC, na.rm = TRUE),
+            sd(AUPC, na.rm = TRUE)) %>%
+  ungroup()
+
+```
+
+# Step 3: Rate of canopy development between 50 GDD intervals
+```{r slope}
+
+# Load data 
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/data/data_processing/3loess_combo_AUPC.csv", check.names = FALSE)
+
+# Make list of column names to extract dates
+dates <- as.numeric(colnames(c)[2:29])
+
+# Calculate slope between each GDD
+## Make empty data frame with 27 rows to output results
+slope_data <- data.frame(matrix(NA, nrow = 27))
+
+for (i in seq_len(nrow(c))) { #For each row in data frame
+  row <- c[i,2:29] #Subset row
+  
+  # Slope formula y2-y1/x2-x2
+  # Set sliding window for pulling slope numbers
+  x1 <- 1
+  x2 <- 2
+  y2 <- 2
+  
+  # Make new data frame to save slopes for each row in
+  slope_row <- data.frame()
+
+  # For each column in extracted row (1-28) except for last (28), because no slope without a next point
+  for (j in 1:27) {
+
+  slope <- (((row[y2] - row[j]) / (dates[x2] - dates[x1]))) * 100 # Slope formula, multiplied by 100
+  
+  slope_row[j, 1] <- slope # Add to row data frame
+  
+  # Move to next time and data points to calculate new slope
+  y2 <- y2 + 1
+  x2 <- x2 + 1
+  x1 <- x1 + 1
+  }
+  
+  # Bind all slopes from each row as a new column in master data frame
+  slope_data <- cbind(slope_data, slope_row)
+}
+
+## Format results
+# Get list of plot names
+plots <- c(c$Plot)
+
+# Remove filler column
+slope_data <- slope_data[, -1]
+
+# Rename slope columns as corresponding plots
+colnames(slope_data) <- plots
+
+# Make new columns with slope order
+slope_data$Slope <- seq(1:27)
+
+# Transpose
+slope_data_transpose <- t(slope_data)
+
+# Change to data frame
+slope_data_transpose <- as.data.frame(slope_data_transpose)
+
+# Make row index (Plot) a new column
+slope_data_transpose <- tibble::rownames_to_column(slope_data_transpose, "Plot")
+
+# Merge slope with CC and AUPC
+c_AUPC_slope <- merge(c, slope_data_transpose, by = "Plot")
+
+# Save data frame
+write.csv(c_AUPC_slope, "/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/data/data_processing/4loess_combo_AUPC_slope.csv", row.names = FALSE)
+
+# Plot distribution of slopes over time
+## Subset df, only keep slope
+c_slope <- c_AUPC_slope[, c(1, 30:34, 36:62)]
+
+## Pivot long
+c_slope_long <- pivot_longer(c_slope, cols = 7:33, names_to = "Interval", values_to = "Slope")
+
+## Set order of Interval factor
+c_slope_long$Interval = factor(c_slope_long$Interval, levels = c(seq(1:27)))
+
+## Plot
+ggplot(c_slope_long, aes(x=as.factor(Interval), y=Slope)) + 
+  geom_boxplot(fill="slateblue", alpha=0.2) + 
+  xlab("GDD Interval")
+
+############ Stats for Rate of CC Development ##################
+# Load data
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/data/data_processing/4loess_combo_AUPC_slope.csv", check.names = FALSE)
+
+## Subset df, only keep slope
+c_slope <- c[, c(1, 30:34, 36:62)]
+
+## Pivot long
+c_slope_long <- pivot_longer(c_slope, cols = 7:33, names_to = "Interval", values_to = "Slope")
+
+# Convert intervals to GDD
+c_slope_long <- c_slope_long %>%
+  mutate(
+    GDD = case_when(
+      Interval == "1" ~ "300-350",
+      Interval == "2" ~ "350-400",
+      Interval == "3" ~ "400-450",
+      Interval == "4" ~ "450-500",
+      Interval == "5" ~ "500-550",
+      Interval == "6" ~ "550-600",
+      Interval == "7" ~ "600-650",
+      Interval == "8" ~ "650-700",
+      Interval == "9" ~ "700-750",
+      Interval == "10" ~ "750-800",
+      Interval == "11" ~ "800-850",
+      Interval == "12" ~ "850-900",
+      Interval == "13" ~ "900-950",
+      Interval == "14" ~ "950-1000",
+      Interval == "15" ~ "1000-1050",
+      Interval == "16" ~ "1050-1100",
+      Interval == "17" ~ "1100-1150",
+      Interval == "18" ~ "1150-1200",
+      Interval == "19" ~ "1200-1250",
+      Interval == "20" ~ "1250-1300",
+      Interval == "21" ~ "1300-1350",
+      Interval == "22" ~ "1350-1400",
+      Interval == "23" ~ "1400-1450",
+      Interval == "24" ~ "1450-1500",
+      Interval == "25" ~ "1500-1550",
+      Interval == "26" ~ "1550-1600",
+      Interval == "27" ~ "1600-1650")
+  )
+
+# Set order
+GDD_order <- as.character(c("300-350", "350-400", "400-450", "450-500", "500-550", "550-600", "600-650", "650-700", "700-750",  "750-800",  "800-850",  "850-900",  "900-950",  "950-1000",  "1000-1050", "1050-1100",  "1100-1150",  "1150-1200",  "1200-1250",  "1250-1300",  "1300-1350",  "1350-1400",  "1400-1450",  "1450-1500",  "1500-1550",  "1550-1600",  "1600-1650"))
+
+# Average, Max, Min, and SD Slope of each GDD
+rate_stats <- c_slope_long %>%
+  group_by(GDD) %>%
+  summarise(meanSlope = round(mean(Slope, na.rm = TRUE), 2),
+            maxSlope = round(max(Slope, na.rm = TRUE), 2),
+            minSlope = round(min(Slope, na.rm = TRUE),2),
+            sdSlope = round(sd(Slope, na.rm = TRUE), 2),
+            CV = round(cv(Slope, na.rm = TRUE), 3)) %>%
+  arrange(factor(GDD, levels = GDD_order))
+
+# Max Slope of each Year
+c_slope_long %>%
+  group_by(Year) %>%
+  filter(Slope == max(Slope, na.rm = TRUE))
+
+# Add Phase
+juvenile <- c("300-350", "350-400", "400-450")
+adult <- c("450-500", "500-550", "550-600", "600-650", "650-700", "700-750",  "750-800",  "800-850",  "850-900",  "900-950",  "950-1000",  "1000-1050", "1050-1100",  "1100-1150")
+reproductive <- c("1150-1200",  "1200-1250",  "1250-1300",  "1300-1350",  "1350-1400",  "1400-1450",  "1450-1500",  "1500-1550",  "1550-1600",  "1600-1650")
+
+# Average, Max, Min, and SD Slope of each Growth Stage
+x <- c_slope_long %>%
+  mutate(Stage = case_when(GDD %in% juvenile ~ "Juvenile",
+                           GDD %in% adult ~ "Adult",
+                           GDD %in% reproductive ~"Reproductive")) %>%
+  group_by(Stage) %>%
+   summarise(meanSlope = round(mean(Slope, na.rm = TRUE), 2),
+            maxSlope = round(max(Slope, na.rm = TRUE), 2),
+            minSlope = round(min(Slope, na.rm = TRUE),2),
+            sdSlope = round(sd(Slope, na.rm = TRUE), 2),
+            CV = round(cv(Slope, na.rm = TRUE), 3))
+
+# Max rate of development for each growth stage in each year
+paged_table(c_slope_long %>%
+  mutate(Stage = case_when(GDD %in% juvenile ~ "Juvenile",
+                           GDD %in% adult ~ "Adult",
+                           GDD %in% reproductive ~"Reproductive")) %>%
+  group_by(Year, Stage) %>%
+  summarise(meanSlope = round(mean(Slope, na.rm = TRUE), 2),
+            maxSlope = round(max(Slope, na.rm = TRUE), 2),
+            minSlope = round(min(Slope, na.rm = TRUE),2),
+            sdSlope = round(sd(Slope, na.rm = TRUE), 2)))
+
+```
+
+# Step 4: Adult Vegetative Slope
+Not used in paper
+```{r AVS}
+
+# Load data
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/data/data_processing/4loess_combo_AUPC_slope.csv", check.names = FALSE)
+
+# Calculate slope between 600 and 1000 GDD
+c_AVS <- c %>%
+    mutate(AVS = ((`1000` - `600`)/400)*100) # Slope formula, multiplied by 100
+
+# Save final data frame with all traits results folder
+write.csv(c_AVS, "/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", row.names = FALSE)
+
+# Plot histogram of AVS
+c_AVS %>%
+  ggplot(aes(AVS)) +
+  geom_histogram() +
+  facet_grid(~Year) # Facet by Env.
+
+############ Stats for AUPC ##################
+
+# Mean and SD AVS
+c_AVS %>%
+ summarise(mean = round(mean(AVS, na.rm = TRUE), 3),
+            max = round(max(AVS, na.rm = TRUE), 3),
+            min = round(min(AVS, na.rm = TRUE),3),
+            sd = round(sd(AVS, na.rm = TRUE), 3),
+           CV = round(cv(AVS, na.rm = TRUE), 3))
+
+# Mean and SD AVS per year
+c_AVS %>%
+  group_by(Year) %>%
+  summarise(mean(AVS, na.rm = TRUE),
+            sd(AVS, na.rm = TRUE)) %>%
+  ungroup()
+
+```
+
+# Why not use the loess regression coefficients as a phenotypic parameter?
+"The local polynomials fit to each subset of the data are almost always of first or second degree; that is, either locally linear (in the straight line sense) or locally quadratic. Using a zero degree polynomial turns LOESS into a weighted moving average. Higher-degree polynomials would work in theory, but yield models that are not really in the spirit of LOESS. LOESS is based on the ideas that any function can be well approximated in a small neighborhood by a low-order polynomial and that simple models can be fit to data easily. High-degree polynomials would tend to overfit the data in each subset and are numerically unstable, making accurate computations difficult."
+
+"As discussed above, the biggest advantage LOESS has over many other methods is the process of fitting a model to the sample data does not begin with the specification of a function. Instead the analyst only has to provide a smoothing parameter value and the degree of the local polynomial. In addition, LOESS is very flexible, making it ideal for modeling complex processes for which no theoretical models exist."
+
+"Another disadvantage of LOESS is the fact that it does not produce a regression function that is easily represented by a mathematical formula. This can make it difficult to transfer the results of an analysis to other people. In order to transfer the regression function to another person, they would need the data set and software for LOESS calculations."
+
+TLDR; There are no uniform model parameters from Loess to use as phenotypes. Each data point is individually fit based on the span. This leads to a very accurate growth curve across the season, but at the cost of having a uniform model each plot is fit into. 

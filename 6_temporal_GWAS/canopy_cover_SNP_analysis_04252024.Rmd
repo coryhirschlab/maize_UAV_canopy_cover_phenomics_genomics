@@ -1,0 +1,301 @@
+---
+title: "Canopy Cover SNP Analysis Pipeline"
+author: "Julian Cooper"
+date: "5/19/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r}
+library(tidyverse)
+library(dplyr)
+library(data.table)
+library(patchwork)
+library(ggplot2)
+library(desplot)
+
+```
+
+# Step 0: Calculate LD between SNPs
+NOT RUN
+Output file from Dorothy Sweet in Candice Hirsch Lab
+Code from Rafael Della Coletta in Candice Hirsch Lab
+
+ld-window-r2: Option to report only LD values above a particular value. The default is set at 0.2. To get all pairs reported, set --ld-window-r2 to 0.
+ld-window: Number of SNPs in window. We want to use 1MB window size, so set this high at 1000000 AKA one SNP per base. Will never exceed that 1 SNP per base amount, so each window will be 1 MB.
+ld-window-kb: Number of bases in window. 1000kb = 1MB window.
+geno: Only LD for markers with less than 25% missing data.
+
+#Calculating_LD_btwn_SNPs.sh
+```{bash, eval = FALSE}
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=8
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=100gb
+#SBATCH --time=8:00:00
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=coop0409@umn.edu
+#SBATCH -o /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/err_out/%j.out
+#SBATCH -e /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/err_out/%j.err
+
+### FROM RAFA! CHANGES NEED TO BE MADE
+module load plink/1.90b6.10
+
+# transform hapmap file into plink file
+run_pipeline.pl -Xmx10g \
+                                -importGuess christine_common_final.hmp.txt \
+                                -export christine_final_hmp \
+                                -exportType Plink
+
+# run LD analysis in 1Mb windows
+plink --file christine_final_hmp.plk \
+          --make-founders \
+          --r2 gz dprime with-freqs \
+          --ld-window-r2 0 \ 
+          --ld-window 1000000 \ 
+          --ld-window-kb 1000 \ 
+          --geno 0.25 \
+          --out ld_file_christine_data \
+          --allow-extra-chr
+```
+
+# Step 0.1: Make list of unique SNPs
+Run on computer. 5/28.
+
+Output Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/txt_lists/unique_snps.txt
+Output MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/txt_lists/unique_snps.txt
+```{r}
+
+# Read in data frame with all significant SNPs
+snps <- read.delim("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/results/all_sig_snps_FarmCPU.txt", sep = "")
+
+# Save unique SNPS as list
+unique_snps <- unique(snps$SNP)
+
+# Convert to data frame
+unique_snps <- as.data.frame(unique_snps)
+
+# Rename column
+colnames(unique_snps) <- "SNP"
+
+# Save data frame
+write.csv(unique_snps, "/Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/txt_lists/unique_snps.txt", row.names = FALSE)
+
+```
+
+
+# Step 1: Linkage Disequilibrium
+RUN ON MSI
+Run 05/20/2022: sbatch /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/run_LD_parsing.sh
+Rerun 5/24/22: sbatch /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/run_LD_parsing.sh
+Rerun 5/28/22: sbatch /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/run_LD_parsing.sh
+
+Script Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/scripts
+Script MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/scripts
+
+PURPOSE: Takes a matrix of LD scores between each SNP, previous created by Dorothy Sweet in the Candice Hirsch Lab, and filters only for significant SNPs found in canopy cover GWAS results.
+OUTPUT: A new, smaller matrix that only has LD scores for significant SNPs
+
+Output Computer Location: /Users/jcooper/Desktop/thesis_research/canopy_cover_master/not_Github/genomic_data/ld_file_christine_data_filter.ld
+Output MSI Location: /home/hirschc3/coop0409/canopy_cover/GWAS/SNP_analysis/LD/ld_file_christine_data_filter.ld
+
+## LD_parsing.pl
+```{perl}
+#! /usr/bin/perl
+
+use warnings;
+use strict;
+use Getopt::Std;
+
+my $usage = "\n$0 -l ld_file -s sig_snp_file -o ld_output_file -h help\n\n";
+
+our ($opt_l, $opt_s, $opt_o, $opt_h);
+
+getopts("l:s:o:h") or die "$usage";
+
+if ( (!(defined $opt_l)) or (!(defined $opt_s)) or (!(defined $opt_o)) or (defined $opt_h) ) {
+  print "$usage";
+  exit;
+}
+
+#Open the annotation file with the FileHandle $anno_fh for reading
+open (my $ld_fh, '<', $opt_l) or die "\n\nCannot open the input ld file $opt_l\n\n";
+open (my $snp_fh, '<', $opt_s) or die "\n\nCannot open the input snp file $opt_s\n\n";
+open (my $out_fh, '>', $opt_o) or die "\n\nCannot open the output file $opt_o\n\n";
+
+my %snps;
+while (my $line = <$snp_fh>) {
+  chomp $line;
+  $line =~ s/"//g;
+  $snps{$line} = "";
+}
+
+my $line1 = <$ld_fh>;
+print $out_fh "$line1";
+
+while (my $line = <$ld_fh>) {
+  chomp $line;
+
+  $line =~ /\s+\S+\s+\S+\s+(\S+)\s+/;
+
+  if (defined $snps{$1}) {
+    print $out_fh "$line\n";
+  }
+}
+
+close $ld_fh;
+close $snp_fh;
+close $out_fh;
+```
+
+## run_LD_parsing.sh
+```{bash}
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=8
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=20gb
+#SBATCH --time=2:00:00
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=coop0409@umn.edu
+#SBATCH -o /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/err_out/%j.out
+#SBATCH -e /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/err_out/%j.err
+
+cd /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/
+
+perl /home/hirschc3/coop0409/canopy_cover/GWAS/scripts/LD_parsing.pl -l /home/hirschc3/coop0409/canopy_cover/GWAS/SNP_analysis/LD/ld_file_christine_data.ld -s /home/hirschc3/coop0409/canopy_cover/GWAS/txt_lists/unique_snps.txt
+ -o /home/hirschc3/coop0409/canopy_cover/GWAS/SNP_analysis/LD/ld_file_christine_data_filter.ld
+
+```
+
+# Step 2: Filter Significant SNPs in LD with eachother
+Run on personal computer
+R^2 > than threshold (.9 or .95) in LD
+```{r}
+
+# Read in the LD file filtered with only the significant SNPs
+ld_file <- read.table("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/not_Github/genomic_data/ld_file_christine_data_filter.ld", header = TRUE)
+
+count(ld_file %>% summarise(unique(SNP_A)))
+
+# Read in unique SNP list
+uniqueSNP <- read.delim("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/txt_lists/unique_snps.txt", header = T, sep = "\n")
+
+# Read in significant SNPs data frame
+gwasResults <- read.delim("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/results/all_sig_snps_FarmCPU.txt")
+
+# Filter BLUP iteration identifier into three columns with year, phenotype, and GDD
+gwasResults <- gwasResults %>% separate(BLUP_file, c("Phenotype","Year", "GDD"), sep = "_")
+
+# Filter for SNPs in significant LD
+filtered_ld <- ld_file %>%
+  filter(R2 >= .9)
+
+# Initialize data frame to count total number of significant SNPs after accounting for LD, regardless of year, GDD, or phenotype correspondence.
+total_SNPs_after_LD <- as.data.frame(matrix(nrow = 0, ncol = 1))
+
+# Initialize data frame to pool significant SNPs in LD with each other into one SNP identifier while maintaining the distinct BLUP iteration information. 
+gwasResults_mergedSNPs <- as.data.frame(matrix(nrow = 0, ncol = 1))
+
+# While loop to filter gwasResults for the unique SNPs and they are in LD with
+while(nrow(uniqueSNP) > 0) {
+  
+  # Make snp_being_investigated the first row from uniqueSNP
+  snp_being_investigated <- uniqueSNP[1,1]
+
+  # Make new data frame from filtered LD that only has snp_being_investigated and all SNPs in LD with snp_being_investigated. SNPs in LD are not all significant from GWAS results.
+  sigSnpLd <- filtered_ld %>%
+    filter(SNP_A == snp_being_investigated)
+
+  # Make list of all SNPs here - the snp_being_investigated and all SNPs in LD with snp_being_investigated
+  snpList <- c(snp_being_investigated, sigSnpLd$SNP_B)
+
+  # Remove all values in snpList from uniqueSNP. This removes the snp_being_investigated and other significant SNPs in LD with snp_being_investigated from future iterations of the loop.
+  uniqueSNP <- uniqueSNP %>%
+    subset(!(SNP %in% snpList))
+  
+  # Add snp_being_investigated to new data frame that only tracks unique SNPs after accounting for LD, regardless of year, GDD, or phenotype. Because the previous step removes significant SNPs in LD with snp_being_investigated, this data frame will only have one representative significant SNP from each LD block.
+  total_SNPs_after_LD <- rbind(total_SNPs_after_LD, snp_being_investigated)
+
+  # Filter gwasResults for only the SNPs of interest >>> snp_being_investigated and SNPs in LD with snp_being_investigated. Some of the SNPs in LD will be significant, some won't be. Those that are will be maintained in this filtered gwasResults data frame. 
+  snpResults <- gwasResults %>%
+    subset(SNP %in% snpList)
+
+  # Final step is to create a new gwasResults data frame with one merged significant SNP that represents all signifincant SNPs in LD with the marge and their corresponding BLUP iteration details. 
+  
+    # Change names of all SNPs to snp_being_investigated
+    snpResults$SNP <- snp_being_investigated
+    
+    # Group by SNP, year, phenotype, and GDD. If duplicates exist, keep the larger effect size. Duplicates can occur when snp_being_investigated and a significant SNP in LD with snp_being_investigated both correspond to the same BLUP iteration. For example, S1_214490338 and S1_214490338 are in LD with each other, and both are associated with BLUP iteration Point_2021_1550. S1_214490338 is renamed as S1_214490338 in the previous step, and now since they are identical the row with smaller effect size is removed from the snpResults data frame. 
+    snpResults <- snpResults %>%
+      group_by(SNP, Year, Phenotype, GDD) %>%
+      slice(which.max(effect)) %>%
+      ungroup()
+
+    # Merge snpResults from each iteration of the while loop to gwasResults_mergedSNPs, This data frame will have less rows than gwasResults because significant SNPs in LD that correspond to the same BLUP iteration have been merged into one. Moving forward, when you want to plot specific phenotypes, GDD, or years this data frame will have one SNP name that has the BLUP information for all associated significant SNPs it is in LD with.
+    gwasResults_mergedSNPs <- rbind(gwasResults_mergedSNPs, snpResults)
+    
+}
+
+# Quality check > count should be same as number of rows in total_SNPs_after_LD
+count(gwasResults_mergedSNPs %>% summarise(unique(SNP)))
+
+# Rename column headers
+colnames(total_SNPs_after_LD) <- "SNP"
+
+# Save resulting data frame and lists
+write.table(gwasResults_mergedSNPs, file = "/Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/SNP_analysis/results/LD_merged_sig_snps_FarmCPU.txt", sep = "\t", row.names = F, col.names = T)
+
+write.table(total_SNPs_after_LD, file = "/Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/SNP_analysis/results/LD_merged_unique_snps.txt", sep = "\t", row.names = F, col.names = T)
+
+```
+
+# Step 2.1: QC and check stats on SNPs after LD merge
+```{r}
+
+# Read in significant SNPs data frame
+gwasResults <- read.delim("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/GWAS/SNP_analysis/results/LD_merged_sig_snps_FarmCPU.txt")
+
+# Total number of unique SNPs after merging SNPs in LD
+gwasResults %>% 
+  summarise(unique(SNP)) %>%
+  count()
+
+# Get counts for different groupings
+gwasResults %>% 
+  group_by(Phenotype) %>%
+  summarise(unique(SNP)) %>%
+  count()
+
+gwasResults %>% 
+  group_by(Phenotype) %>%
+  summarise(SNP) %>%
+  count()
+
+gwasResults %>% 
+  group_by(Phenotype, Year) %>%
+  summarise(unique(SNP)) %>%
+  count()
+
+gwasResults %>% 
+  group_by(Phenotype, Year) %>%
+  summarise(SNP) %>%
+  count()
+
+gwasResults %>% 
+  group_by(Chromosome) %>%
+  summarise(SNP) %>%
+  count()
+
+gwasResults %>% 
+  group_by(GDD) %>%
+  summarise(unique(SNP)) %>%
+  count()
+
+print(gwasResults %>% 
+  group_by(Phenotype, Year) %>%
+  summarise(unique(SNP)) %>%
+  count(), n=23)
+
+```

@@ -1,0 +1,536 @@
+---
+title: "2021 Canopy Cover"
+author: "Julian Cooper"
+date: "11/7/2023"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+#Step 0: Load libraries
+```{r load_libraries}
+
+library(dplyr)
+library(data.table)  
+library(tidyverse)
+
+```
+
+# Step 1: Combine canopy cover trait files
+```{r combine_files, results='hide'}
+
+# Get list of files to combine
+txt_files_ls <- list.files("/Users/jcooper/Desktop/thesis_research/canopy_cover/1_image_masking/image_analysis/data_analysis/2021_doubledilated/canopy_closure/",pattern = "txt",full.names = T, recursive = TRUE)
+
+# Turn into data frame
+txt_files_df <- lapply(txt_files_ls, function(x) {read.table(file = x, header = F, col.names = x, sep =",")})
+
+# Combine files
+combined_df <- do.call("cbind", lapply(txt_files_df, as.data.frame)) 
+
+## Rename columns
+# Make list of file column names
+old_names <- c(colnames(combined_df))
+
+# Make list of new GDD column names
+new_names <- c(258, 413.5, 619, 765.5, 874, 1096, 1190, 1251, 1421.5, 1759.5)
+
+# Rename columns to GDD 
+for(i in 1:10) names(combined_df)[names(combined_df) == old_names[i]] = new_names[i]
+
+# Save as .csv
+write.csv(combined_df,"/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/data_processing/1PlantRatio.csv", row.names = FALSE)
+
+```
+
+# Step 2: Generate plot order from QGIS ROI files
+```{r plot_order }
+################ PRODUCES PLOT OUTPUT ORDER BY DETERMINING PLOTS NORTH TO SOUTH THEN WEST TO EAST ######################
+######## CHANGE INPUTS ########################
+
+# read in plot boundaries and coordinates
+plot_roi <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/plot_order/Plots_widiv_ROI2021.csv")
+
+# read in list of plots
+plot_list <- as.matrix(read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/plot_order/Plots_only_WIDIV.csv"))
+
+# Path of location to save the plot orders
+plot_order_loc = "/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/plot_order/"
+
+# Name of Field
+Field = 'WIDIV'
+# give the dimensions of the plot grid
+plot_grid_width =  48    # number of plots in a range
+plot_grid_length =  22   # number of ranges
+total_num_plots = 1056
+
+################################################################################################################################
+options(digits = 15) # change the number of digits seen in files
+# remove unnecessary columns
+plot_roi$Geometry <- NULL
+plot_roi$BoundingBox <- NULL
+plot_roi$left <- NULL
+plot_roi$top <- NULL
+plot_roi$right <- NULL
+plot_roi$bottom <- NULL
+
+# split x column 
+plot_roi <- splitstackshape::cSplit(plot_roi, "X", sep = ",")
+
+# remove extra X columns
+plot_roi$X_6 <- NULL
+plot_roi$X_5 <- NULL
+plot_roi$X_4 <- NULL
+plot_roi$X_3 <- NULL
+plot_roi$X_2 <- NULL
+
+# remove the bracket from X_1
+plot_roi <- splitstackshape::cSplit(plot_roi, "X_1", sep = "[")
+
+# rename keep row and remove unnecessary rows
+plot_roi$X_coor <- plot_roi$X_1_2
+plot_roi$X_1_1 <- NULL
+plot_roi$X_1_2 <- NULL
+
+# Split y column, remove extra Y columns, remove the bracket, and rename the keep row
+plot_roi <- splitstackshape::cSplit(plot_roi, "Y", sep = ",")
+plot_roi <- splitstackshape::cSplit(plot_roi, "Y_1", sep = "[")
+plot_roi$Y_coor <- plot_roi$Y_1_2
+plot_roi$Y_1_1 <- NULL
+plot_roi$Y_1_2 <- NULL
+plot_roi$Y_6 <- NULL
+plot_roi$Y_5 <- NULL
+plot_roi$Y_4 <- NULL
+plot_roi$Y_3 <- NULL
+plot_roi$Y_2 <- NULL
+
+# Organize the plots X increasing and Y decreasing
+plot_roi_temp <- plot_roi[order(plot_roi$X_coor),]
+plot_roi.2 <- data.frame()
+for(i in 1:plot_grid_length){
+  if(nrow(plot_roi_temp)>=plot_grid_width){
+    plot_roi_temp2 <- plot_roi_temp[1:plot_grid_width,]
+  } else{
+    plot_roi_temp2 <- plot_roi_temp[1:nrow(plot_roi_temp),]
+  }
+  plot_roi_temp2 <- plot_roi_temp2[order(plot_roi_temp2$Y_coor, decreasing = T),]
+  plot_roi_temp <- plot_roi_temp[(plot_grid_width +1):nrow(plot_roi_temp),]
+  
+  plot_roi.2 <- rbind(plot_roi.2, plot_roi_temp2)
+}
+
+# add new column with non-serpentine order
+plot_roi.2$non_serp <- 1:(total_num_plots) 
+
+# reorder the list of plots so no longer serpentine
+Count = 1  # setup for 'for loop'
+plot_list2 = matrix(nrow = (total_num_plots), ncol = 1) # make a new plot list file to put the new order in
+
+for (Count in 1:plot_grid_length){
+  if (Count %% 2 == 1){
+    for (plot in ((((Count - 1)* plot_grid_width)+1):(Count *plot_grid_width))){
+      plot_list2[plot,1] = plot_list[plot,1]}
+    Count = Count + 1
+  }else if (Count %% 2 == 0){
+    for (plot in ((((Count - 1)* plot_grid_width)+1):(Count *plot_grid_width))){
+      if ((plot %% plot_grid_width) != 0){
+        plot_list2[((Count * plot_grid_width) - ((plot %% plot_grid_width)-1)),1] = plot_list[plot,1]
+      }else if ((plot %% plot_grid_width) == 0){ 
+        plot_list2[(plot - (plot_grid_width -1)),1] = plot_list[plot,]}}
+    Count = Count + 1
+  }
+}
+
+# add non-serpentine plot order column to new plot_list2 so will have common column with plot_roi.2
+plot_list2 <- as.data.frame(plot_list2)
+plot_list2$non_serp <- 1:(total_num_plots)
+
+# add new plot order list to plot_roi.2
+plot_roi.3 <- merge(plot_roi.2, plot_list2, by = "non_serp")
+
+## reorganize back into original roi order (as output would be -> ordered by fields)
+plot_order.4 <- plot_roi.3[order(Fields)]
+plot_order.4$Plot <- plot_order.4$V1
+
+plot_order.5 <- plot_order.4$Plot
+
+#Print out the Plot Order text file
+write.table(plot_order.4$Plot, file = paste0(plot_order_loc,"Plots_",Field,"_Ordered.txt"), sep = "\n", row.names = F, col.names = "Plot")
+
+```
+
+# Step 3: Add plot order to trait data frame
+```{r experimental_design_merge}
+
+# Read in final Plant Ratio file
+CC_final <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/data_processing/1PlantRatio.csv", check.names = FALSE)
+
+# Read in plot order file
+p_order <- read.table("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/plot_order/Plots_WIDIV_Ordered.txt", header = TRUE)
+
+#Column bind data frames
+CC_final1 <- cbind(p_order, CC_final) 
+
+
+#Filter out PH207 filler rows
+CC_final2 <- CC_final1[CC_final1$Plot !='PH207',]
+
+write.csv(CC_final2, "/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/data_processing/2PlantRatio_plot.csv",  row.names = FALSE)
+
+##################
+# QC
+
+# Pivot Table into "long"
+ccfinal_long <- pivot_longer(CC_final2, cols=2:11, names_to="flight", values_to="canopy_cover")
+
+# Make "flight" numeric
+ccfinal_long$flight <- as.numeric(ccfinal_long$flight)
+
+# Plot
+ggplot(data=ccfinal_long, aes(x=flight, y=canopy_cover)) +
+  #geom_point(color="gray", size=.1) +
+  geom_line(aes(group=Plot), color="gray") +
+  stat_smooth(method="loess", formula = y ~ x) +
+  stat_summary(aes(flight, canopy_cover), geom = 'point', fun = mean, shape = 17, size = 3, col = "red") + 
+  theme_bw() + 
+  xlab('Flight (GDD)') + 
+  ylab('Plant Ratio') + 
+  ggtitle("2021 Double Dilated Percent Canopy Cover")
+
+# Count check lines
+# Load experimental design info
+design <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/loess/2021/data/field_data/2021_Widiv_FieldBook.csv")
+
+design_all <- merge(CC_final2, design, by = "Plot")
+
+# Number of genotypes
+geno_count <- design_all %>%
+  group_by(Genotype) %>%
+  mutate(rep_count = n()) %>%
+  ungroup()
+```
+
+# Step 4: Adjust for stand
+```{r adjust_stand}
+
+# Read in PlantRatio_plot
+c2021 <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/data_processing/2PlantRatio_plot.csv", check.names = FALSE)
+
+# Read in stand counts
+stand2021 <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/field_data/2021_stand_JC01052021.csv")
+
+# Merge by "Plot"
+c_stand <- merge(c2021, stand2021, by = "Plot")
+
+# Change stand counts to numeric
+c_stand$Stand <- as.numeric(c_stand$Stand)
+
+# Filter for stand counts > 14
+c_standfilter <- c_stand %>%
+  filter(Stand > 14) # n = 860
+
+# Save data frame
+write.csv(c_standfilter, "/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/data_processing/3PlantRatio_plot_stand.csv",  row.names = FALSE)
+
+##################
+# QC
+
+# Pivot Table into "long"
+ccfinal_long <- pivot_longer(c_standfilter, cols=2:11, names_to="flight", values_to="canopy_cover")
+
+# Make "flight" numeric
+ccfinal_long$flight <- as.numeric(ccfinal_long$flight)
+
+# Plot
+ggplot(data=ccfinal_long, aes(x=flight, y=canopy_cover)) +
+  #geom_point(color="gray", size=.1) +
+  geom_line(aes(group=Plot), color="gray") +
+  stat_smooth(method="loess", formula = y ~ x) +
+  stat_summary(aes(flight, canopy_cover), geom = 'point', fun = mean, shape = 17, size = 3, col = "red") + 
+  theme_bw() + 
+  xlab('Flight (GDD)') + 
+  ylab('Plant Ratio') + 
+  ggtitle("2021 Double Dilated Percent Canopy Cover - Weeds, Stand") +
+  labs(caption = "n = 860")
+
+```
+
+# Step 5: Filter peaks and valleys
+```{r filter_pv}
+
+# Read in data
+c2021 <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/data_processing/3PlantRatio_plot_stand.csv", check.names = FALSE)
+
+# Remove extra columns
+c2021 <- c2021[, 1:11]
+
+# Function to filter peaks and valleys
+big_data <- data.frame() #make empty data frame
+filter_peaks <- function(df) { #Input df into function
+  for (i in seq_len(nrow(df))) { #For each row in data frame
+  row <- df[i,] #Subset row
+  names <- colnames(row) # Make list of column names
+  # Pivot row into long
+  row <- pivot_longer(row, cols = names[2:11], names_to = "flight", values_to = "closure") 
+  # print(row)
+  
+  left <- 1 # Set left end of sliding evaluation window
+  right <- 3 # Set right end of sliding evaluation window
+  
+  # Check for dips 
+  for (j in 1:1) {row[j,4] <- NA} # Nothing to compare first flight to, automatically label good
+  
+  for (j in 2:9) { #For each column in row starting at 3
+    
+    # Rules of finding valleys
+    if (row[j, 3] < row[left, 3] * .90) 
+      if (row[right, 3] > row[j, 3])
+        if (row[left, 3] < row[right, 3])
+        {row[j,4] <- "dip"}
+    
+    # Rules for finding peaks
+    if (row[j, 3] > row[right, 3] * 1.10) 
+      if (row[right, 3] > row[left, 3])
+        if (row[left, 3] < row[j, 3])
+        {row[j,4] <- "peak"}
+    
+    # Move sliding window to next data point
+    left <- left + 1
+    right <- right + 1
+  }
+  
+  # Rules for checking if last data point is valley, can't check for peaks b/c nothing to compare to on right
+  for (j in 10:10) {
+    if ((row[j, 3]/row[9, 3]) < .90) {row[j,4] <- "dip"} else {row[j,4] <- NA}
+
+  }
+  big_data <- rbind(big_data, row) # Bind each row back to the empty data frame created outside the function
+
+  }
+  c2021_dipdrop <<- big_data # Export data frame with peaks and valleys labeled outside of function
+
+}
+
+# Run Function  
+filter_peaks(c2021)
+
+# Make new column copying closure
+c2021_dipdrop$closureNA <- c2021_dipdrop$closure
+
+# Replace data points with NA if tagged as peak or valley
+c2021_dipdrop$closureNA <- ifelse(is.na(c2021_dipdrop$...4), c2021_dipdrop$closure, ifelse(c2021_dipdrop$...4 == "dip",  NA, ifelse(c2021_dipdrop$...4 == "peak", NA, c2021_dipdrop$closure)))
+
+# Remove extra columns
+c2021_dipdrop <- c2021_dipdrop[,c(1, 2, 5)]
+
+# Pivot wide To count # of NA per row
+c2021_wide <- pivot_wider(c2021_dipdrop, names_from = "flight", values_from = "closureNA")
+
+# Make new column with na counts
+c2021_wide$na_count <- apply(c2021_wide, 1, function(x) sum(is.na(x)))
+
+# Pivot back to long to filter out na counts past certain threshold
+c2021_long <- c2021_wide %>%
+  pivot_longer(cols = 2:11, names_to = "flight", values_to = "closure")
+
+# Count na
+c2021_long %>%
+  summarise(sum(is.na(closure))) # 384 NA data points
+
+# Filter plots with na count > 3
+c2021_filter <- c2021_long %>%
+  filter(na_count < 3)
+
+# Count number of plots
+c2021_filter %>%
+  summarise(n_distinct(Plot)) # Keeps 827 of 859 plots
+
+# Count na
+c2021_filter%>%
+  summarise(sum(is.na(closure))) # 275 NA data points
+
+# Pivot back to wide
+c2021_final <- pivot_wider(c2021_filter, names_from = "flight", values_from = "closure")
+
+# Save data frame
+write.csv(c2021_final, "/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/data_processing/4PlantRatio_plot_stand_dips.csv",  row.names = FALSE)
+
+##################
+# QC
+
+# Make "flight" numeric
+c2021_filter$flight <- as.numeric(c2021_filter$flight)
+
+# Plot
+ggplot(data=c2021_filter, aes(x=flight, y=closure)) +
+  #geom_point(color="gray", size=.1) +
+  geom_line(aes(group=Plot), color="gray") +
+  stat_smooth(method="loess", formula = y ~ x) +
+  stat_summary(aes(flight, closure), geom = 'point', fun = mean, shape = 17, size = 3, col = "red") + 
+  theme_bw() + 
+  xlab('Flight (GDD)') + 
+  ylab('Plant Ratio') + 
+  ggtitle("2021 Double Dilated Percent Canopy Cover - Weeds, Stand, Peaks and Valleys") +
+  labs(caption = "n = 827")
+
+
+```
+
+# Step 6: Determine best span
+```{r span, eval = FALSE}
+
+C <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/data_processing/4PlantRatio_plot_stand_dips.csv", check.names = FALSE)
+
+# Drop na_count column
+C <- C[, c(1, 3:12)]
+
+
+C_long <- pivot_longer(C, cols = 2:11, names_to = "flight", values_to = "canopy_cover") #Pivot long based on flight columns
+
+C_long$flight <- as.numeric(C_long$flight)
+
+#Determine best span
+span.seq <- seq(from = 0.15, to = 0.95, by = 0.05) #explores range of spans
+k <- 100 #number of folds
+set.seed(1) # replicate results
+folds <- sample(x = 1:k, size = nrow(C_long), replace = TRUE)
+cv.error.mtrx <- matrix(rep(x = NA, times = k * length(span.seq)), 
+                        nrow = length(span.seq), ncol = k)
+
+for(i in 1:length(span.seq)) {
+  for(j in 1:k) {
+    loess.fit <- loess(formula = canopy_cover ~ flight, data = C_long[folds != j, ], span = span.seq[i])
+    preds <- predict(object = loess.fit, newdata = C_long[folds == j, ])
+    cv.error.mtrx[i, j] <- mean((C_long$canopy_cover[folds == j] - preds)^2, na.rm = TRUE)
+    # some predictions result in `NA` because of the `x` ranges in each fold
+ }
+}
+
+# mean error from each fold
+cv.errors <- rowMeans(cv.error.mtrx)
+
+# determine which span was the best span
+best.span.i <- which.min(cv.errors)
+best.span.i
+best_span <- span.seq[best.span.i]
+
+plot(x = span.seq, y = cv.errors, type = "l", main = "CV Plot")
+points(x = span.seq, y = cv.errors, pch = 20, cex = 0.75, col = "blue")
+points(x = span.seq[best.span.i], y = cv.errors[best.span.i], pch = 20, cex = 1, col = "red")
+
+# Best span = .15 - .35. Set eval = FALSE when knitting because code takes so long to run.
+```
+
+# Step 7: Generate Loess curves
+```{r loess, results = "hide", warning = FALSE}
+
+# Read in data
+C <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/data_processing/4PlantRatio_plot_stand_dips.csv", check.names = FALSE)
+
+# Set span to lowest number that will still run. .25.
+best_span <- .25
+
+# Drop na_count column
+C <- C[, c(1, 3:12)]
+
+# Loess loop
+for(i in 1:nrow(C)){ # For i in 1:number of rows in df C
+  
+  #Format Data
+  plot <- C[i,] #Subset row i
+  plot_long <- pivot_longer(plot, cols=2:11, names_to="flight", values_to="canopy_cover") #Pivot row i to long
+  plot_long$flight <- as.numeric(plot_long$flight) #Make flight numeric
+  plot_name <- as.matrix(C[i,1]) #Extract plot name
+  
+  #Run Model
+  plot.loess <- loess(canopy_cover ~ flight, plot_long, span = best_span) #Run the model
+  
+  #Predict Along Curve
+  predictions <- data.frame(seq(300,1650, by = 50)) #Make data frame with column of GDD at intervals 1-1650, by 50
+  predictions$canopy_cover <- predict(plot.loess, data.frame(flight = seq(300, 1650, by = 50))) #Predict for each point along observed GDD curve
+  
+  #Format Predictions
+  predictions$GDD <- predictions[,1] #Rename column of 1-1650 sequence as GDD
+  predictions[,1] <- NULL #Remove unnamed column of sequence
+  predictions <- predictions[, c(2,1)] #Reorganize so GDD is first column, canopy_cover is second
+  # #Plot Predictions
+  # ggplot(predictions, aes(x = GDD, y = canopy_cover)) +
+  #   geom_point() +
+  #   geom_line()
+  
+  # Rename canopy_cover column to the name of the plot
+  colnames(predictions)[which(colnames(predictions)=="canopy_cover")] <- plot_name
+  
+  # Make a file with Plot predictions in order to keep row names and not export the GDD repeatedly
+  Plot_Predictions <- predictions
+  Plot_Predictions$GDD <- NULL
+
+  Plot_Predictions <- (t(Plot_Predictions)) #transpose
+  
+  # Export column names for first row only
+  if(i==1){
+    y <- Plot_Predictions 
+    
+  } else {
+    y <- rbind(y, Plot_Predictions) #Doesn't export name after i ==1
+
+  }
+}
+
+#Format Predictions
+colnames(y) <- seq(300, 1650, by = 50) # Add column names
+y2 <- as.data.frame(y, row.names = NULL) # Change to data frame
+y3 <- tibble::rownames_to_column(y2, ) # Make row names (Plot) a column
+
+Loess_Plot_Predictions2021 <- y3 # Rename data frame
+Loess_Plot_Predictions2021$Plot <- Loess_Plot_Predictions2021$rowname # Copt row name column with new name
+Loess_Plot_Predictions2021$rowname <- NULL # Remove old row name column
+
+Loess_Plot_Predictions2021 <- Loess_Plot_Predictions2021[, c(29,1:28)] #Reorganize so GDD is first column, canopy_cover is second
+
+# Save data frame
+write.csv(Loess_Plot_Predictions2021, "/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/data_processing/5PlantRatio_loess.csv",  row.names = FALSE)
+
+```
+
+# Step 8: Merge Loess curves with experimental design
+```{r design}
+
+# Load loess
+loess <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/data_processing/5PlantRatio_loess.csv", check.names = FALSE)
+
+# Load experimental design info
+design <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/data/field_data/2021_Widiv_FieldBook.csv")
+
+# Merge data frames
+design_loess <- merge(loess, design, by = "Plot")
+
+write.csv(design_loess, "/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/results/2021_loess_CC.csv",  row.names = FALSE)
+
+##################
+# QC
+
+# Pivot Table into "long"
+c_long <- pivot_longer(design_loess, cols=2:29, names_to="flight", values_to="closure")
+
+# Make "flight" numeric
+c_long$flight <- as.numeric(c_long$flight)
+
+# Plot
+p <- ggplot(data=c_long, aes(x=flight, y=closure)) +
+  #geom_point(color="gray", size=.1) +
+  geom_line(aes(group=Plot), color="gray") +
+  stat_smooth(method="loess", formula = y ~ x) +
+  stat_summary(aes(flight, closure), geom = 'point', fun = mean, shape = 17, size = 3, col = "red") + 
+  theme_bw() + 
+  xlab('Flight (GDD)') + 
+  ylab('Plant Ratio') + 
+  ggtitle("2021 Double Dilated Percent Canopy Cover - Loess") +
+  labs(caption = "n = 839, span = .3")
+
+p
+
+ggsave("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/2021/results/2021_loess_CC.png", p, width=4, height=4)
+
+
+```

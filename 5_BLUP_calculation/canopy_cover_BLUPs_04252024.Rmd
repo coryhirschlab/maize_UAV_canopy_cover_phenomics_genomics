@@ -1,0 +1,1060 @@
+---
+title: "Canopy Cover Best Linear Unbiased Predictors"
+author: "Julian Cooper"
+date: "12/08/2023"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+## Step 0: Load packages
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(tibble)
+library(lme4)
+
+```
+
+## Step 0: Change field names to SNP hapmap names
+```{r}
+
+# Load data
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/2_canopy_traits/combined_years/results/canopy_cover_AUPC_slope_AVS.csv", check.names = FALSE)
+
+# Load SNP hapmap names
+taxa_dict <- read.table("/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/taxa_field_hapmap_dictionary.txt", sep = "\t", header = TRUE)
+
+# Rename df. Taxa column is the SNP hapmap names. Genotype column will match with field names.
+colnames(taxa_dict) <- c("taxa", "Genotype")
+
+# Merge data and names. Will have less rows than original because there are some taxa grown that there are no genotypes for
+c_hapmap_names <- merge(c, taxa_dict, by = "Genotype")
+
+# Reorder so genotype and experimental design data is first, then all traits
+c_hapmap_names_ordered <- c_hapmap_names[,c(64, 2, 31:35, 3:30, 36:63)]
+
+write.csv(c_hapmap_names_ordered, "/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/canopy_cover_phenotypes_hapmapnames.csv", row.names = FALSE)
+
+```
+
+## Step 1: ANOVA and BLUP Loop for Point
+Code adapted from Dorothy Sweet and Johnathan Renk GWAS pipeline.
+```{r eval = FALSE}
+
+# Set working directory
+setwd("/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/results")
+
+# Load renamed canopy cover df
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/canopy_cover_phenotypes_hapmapnames.csv", check.names = FALSE)
+
+c_point <- c[,c(1:6, 8:35)]
+
+# Change design variables to "factor"
+names <- c(1:6)
+c_point[,names] <- lapply(c_point[,names] , factor)
+
+###################
+#create data frame with 0 rows and 3 columns for storing insignificant factors
+all_insig_factors <- data.frame(matrix(ncol = 7, nrow = 0))
+
+#provide column names
+colnames(all_insig_factors) <- c("Df", "Sum Sq", "Mean Sq", "F value", "Pr(>F)", "factor", "GDD" )
+
+#create data frame with 0 rows and 7 columns for storing all factors
+all_factors <- data.frame(matrix(ncol = 7, nrow = 0))
+
+#provide column names
+colnames(all_factors) <- c("Df", "Sum Sq", "Mean Sq", "F value", "Pr(>F)", "factor", "GDD")
+
+# For each year
+Years <- c(2018, 2019, 2020, 2021)
+
+# Filter data frame for year
+for(a in Years){
+  
+    GDD.temp <- c_point %>%
+    filter(Year == a)
+    
+    # For 2018, only use GDD 450-1650
+    if (a == 2018) {
+      GDD.temp <- GDD.temp[,c(1:6, 10:34)]
+    }
+    # For 2020, only use GDD 300-1450
+    if (a == 2020) {
+      GDD.temp <- GDD.temp[,c(1:30)]
+    }
+    
+   # Filter single year data frame for each GDD 
+  for (j in 7:ncol(GDD.temp)) {
+
+      # Subset main data frame into design factors and one phenotype measurement
+      trait_df <- GDD.temp[, c(1:6, j)]
+      
+      # Remove NA values
+      trait_df <- na.omit(trait_df)
+  
+      # Fit model
+      m2 <- lm(trait_df[,7] ~ taxa + Rep + Block%in%Rep, data = trait_df)
+      
+      # Export model ANOVA results to new data frame
+      m2_results <- anova(m2)
+      
+      # Get names of factors
+      m2_names <- tibble(factor = rownames(m2_results))
+      
+      # Add factor names as own column
+      m2_coefficients <- cbind(m2_results, m2_names)
+      
+       # Save factors
+      model_factors <- m2_coefficients %>%
+        remove_rownames() %>%
+        mutate(GDD = colnames(trait_df[7]),
+               Year = a)
+      
+      # Save to df for export
+      all_factors <- rbind(all_factors, model_factors)
+      
+      # Filter significant factors from model
+      m2_sig <- m2_coefficients %>%
+        filter(`Pr(>F)` < .05)
+      
+      # Filter insignificant factors from model
+      m2_insig <- m2_coefficients %>%
+        remove_rownames() %>%
+        mutate(GDD = colnames(trait_df[7]),
+               Year = a) %>%
+        filter(`Pr(>F)` > .05)
+      
+      # Store insignificant factors from model to reference which were NOT included in BLUPs
+      all_insig_factors <- rbind(all_insig_factors, m2_insig)
+      
+      # Turn significant factors into list
+      sig_factors <- m2_sig$factor
+
+#       # Make BLUPs if Rep and Rep:Block are both significant
+#       if ("Rep" %in% sig_factors && "Rep:Block" %in% sig_factors) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + Rep + Rep%in%Block, data = trait_df, REML = TRUE)
+#       }
+# 
+#        # Make BLUPs neither Repo or Rep:Block is significant
+#       if (!("Rep" %in% sig_factors) && !("Rep:Block" %in% sig_factors)) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa), data = trait_df, REML = TRUE)
+# }
+# 
+#       # Make BLUPs if only Rep is significant
+#       if ("Rep" %in% sig_factors && !("Rep:Block" %in% sig_factors)) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + Rep, data = trait_df, REML = TRUE)
+# }
+# 
+#       # Make BLUPs if only Rep:Block is both significant
+#       if ("Rep:Block" %in% sig_factors && !("Rep" %in% sig_factors)) {
+# 
+#         # Can't just include block, because it is not an independant factor (nested in Rep) so the rank of the model will be wrong. Have to rename Block to be independant
+# 
+#         # Make new column for independent block
+#         trait_df$Solo_Block <- NA
+# 
+#         # For each row
+#         for (j in 1:nrow(trait_df)) {
+# 
+#         # Rename Block as unique letter based on rep/block combo
+#         if (trait_df[j,]$Block == 1){
+#           if (trait_df[j,]$Rep == 1) {
+#           trait_df[j,8] <- "A"}
+#           if (trait_df[j,]$Rep == 2) {
+#           trait_df[j,8] <- "C"}
+#         }
+#         if (trait_df[j,]$Block == 2){
+#           if (trait_df[j,]$Rep == 1) {
+#           trait_df[j,8] <- "B"}
+#           if (trait_df[j,]$Rep == 2) {
+#           trait_df[j,8] <- "D"}
+#         }}
+# 
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + Solo_Block, data = trait_df, REML = TRUE)
+# }
+# 
+#       #Isolate random effects of each phenotype
+#       BLUPS <- ranef(m3)$taxa
+#       iBLUP <- tibble(taxa = rownames(BLUPS), BLUPS = BLUPS[[1]])
+# 
+#       # Code if you want to add GDD and year column to BLUP files
+#       # iBLUP$GDD <- GDD
+#       # iBLUP$Year <- a
+# 
+#       # Save results from each GDD as own txt file
+#       #write.table(iBLUP, file = paste0("BLUPs_Point_",a,"_", GDD, ".txt"), sep = "\t", row.names = FALSE)
+   }}
+
+write.csv(all_insig_factors, "/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/model_factors/insignificant/point_intra_year_insignificant_factors.csv", row.names = FALSE)
+
+write.csv(all_factors, "/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/model_factors/point_intra_year_all_factors.csv", row.names = FALSE)
+
+```
+
+
+## Step 2: ANOVA and BLUP Loop for Slope
+Code adapted from Dorothy Sweet and Johnathan Renk GWAS pipeline.
+```{r}
+
+setwd("/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/results")
+
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/canopy_cover_phenotypes_hapmapnames.csv", check.names = FALSE)
+
+c_slope <- c[,c(1:6, 36:62)]
+
+# Change design variables to "factor"
+names <- c(1:6)
+c_slope[,names] <- lapply(c_slope[,names] , factor)
+
+###################
+#create data frame with 0 rows and 7 columns for storing insignificant factors
+all_insig_factors <- data.frame(matrix(ncol = 7, nrow = 0))
+
+#provide column names
+colnames(all_insig_factors) <- c("Df", "Sum Sq", "Mean Sq", "F value", "Pr(>F)", "factor", "GDD" )
+
+#create data frame with 0 rows and 7 columns for storing all factors
+all_factors <- data.frame(matrix(ncol = 7, nrow = 0))
+
+#provide column names
+colnames(all_factors) <- c("Df", "Sum Sq", "Mean Sq", "F value", "Pr(>F)", "factor", "GDD")
+
+# For each year
+Years <- c(2018, 2019, 2020, 2021)
+
+# Filter data frame for year
+for(a in Years){
+  
+    GDD.temp <- c_slope %>%
+    filter(Year == a)
+    
+    # For 2018, only use GDD 450-1650
+    if (a == 2018) {
+      GDD.temp <- GDD.temp[,c(1:6, 10:33)]
+    }
+    
+    # For 2020, only use GDD 300-1450
+    if (a == 2020) {
+      GDD.temp <- GDD.temp[,c(1:29)]
+    }
+    
+   # Filter single year data frame for each GDD 
+  for (j in 7:ncol(GDD.temp)) {
+     
+      # Subset main data frame into design factors and one phenotype measurement
+      trait_df <- GDD.temp[, c(1:6, j)]
+      
+      # Remove NA values
+      trait_df <- na.omit(trait_df)
+  
+      # Fit model
+      m2 <- lm(trait_df[,7] ~ taxa + Rep + Block%in%Rep, data = trait_df)
+      
+      # Export model ANOVA results to new data frame
+      m2_results <- anova(m2)
+      
+      # Get names of factors
+      m2_names <- tibble(factor = rownames(m2_results))
+      
+      # Add factor names as own column
+      m2_coefficients <- cbind(m2_results, m2_names)
+      
+       # Save factors
+      model_factors <- m2_coefficients %>%
+        remove_rownames() %>%
+        mutate(GDD = colnames(trait_df[7]),
+               Year = a)
+      
+      # Save to df for export
+      all_factors <- rbind(all_factors, model_factors)
+      
+      # Filter significant factors from model
+      m2_sig <- m2_coefficients %>%
+        filter(`Pr(>F)` < .05)
+      
+      # Filter insignificant factors from model
+      m2_insig <- m2_coefficients %>%
+        remove_rownames() %>%
+        mutate(GDD = colnames(trait_df[7]),
+               Year = a) %>%
+        filter(`Pr(>F)` > .05)
+      
+       # Store insignificant factors from model to reference which were NOT included in BLUPs
+      all_insig_factors <- rbind(all_insig_factors, m2_insig)
+      
+      # Turn significant factors into list
+      sig_factors <- m2_sig$factor
+# 
+#       # Make BLUPs if Rep and Rep:Block are both significant
+#       if ("Rep" %in% sig_factors && "Rep:Block" %in% sig_factors) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + Rep + Rep%in%Block, data = trait_df, REML = TRUE)
+#       }
+# 
+#        # Make BLUPs neither Repo or Rep:Block is significant
+#       if (!("Rep" %in% sig_factors) && !("Rep:Block" %in% sig_factors)) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa), data = trait_df, REML = TRUE)
+# }
+# 
+#       # Make BLUPs if only Rep is significant
+#       if ("Rep" %in% sig_factors && !("Rep:Block" %in% sig_factors)) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + Rep, data = trait_df, REML = TRUE)
+# }
+# 
+#       # Make BLUPs if only Rep:Block is both significant
+#       if ("Rep:Block" %in% sig_factors && !("Rep" %in% sig_factors)) {
+# 
+#         # Can't just include block, because it is not an independant factor (nested in Rep) so the rank of the model will be wrong. Have to rename Block to be independant
+# 
+#         # Make new column for independent block
+#         trait_df$Solo_Block <- NA
+# 
+#         # For each row
+#         for (j in 1:nrow(trait_df)) {
+# 
+#         # Rename Block as unique letter based on rep/block combo
+#         if (trait_df[j,]$Block == 1){
+#           if (trait_df[j,]$Rep == 1) {
+#           trait_df[j,8] <- "A"}
+#           if (trait_df[j,]$Rep == 2) {
+#           trait_df[j,8] <- "C"}
+#         }
+#         if (trait_df[j,]$Block == 2){
+#           if (trait_df[j,]$Rep == 1) {
+#           trait_df[j,8] <- "B"}
+#           if (trait_df[j,]$Rep == 2) {
+#           trait_df[j,8] <- "D"}
+#         }}
+# 
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + Solo_Block, data = trait_df, REML = TRUE)
+# }
+# 
+#       #Isolate random effects of each phenotype
+#       BLUPS <- ranef(m3)$taxa
+#       iBLUP <- tibble(taxa = rownames(BLUPS), BLUPS = BLUPS[[1]])
+# 
+#       # Make identifier with GDD
+#       GDD <- colnames(trait_df[7])
+# 
+#       # Code if you want to add GDD and year to BLUP files
+#       # iBLUP$GDD <- GDD
+#       # iBLUP$Year <- a
+# 
+#       # Save results from each GDD as own txt file
+#       write.table(iBLUP, file = paste0("BLUPs_Slope_",a,"_", GDD, ".txt"), sep = "\t", row.names = FALSE)
+   }
+}
+
+write.csv(all_insig_factors, "/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/model_factors/insignificant/slope_intra_year_insignificant_factors.csv", row.names = FALSE)
+
+write.csv(all_factors, "/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/model_factors/slope_intra_year_all_factors.csv", row.names = FALSE)
+
+```
+
+## Step 3: ANOVA and BLUP Loop for Area
+Code adapted from Dorothy Sweet and Johnathan Renk GWAS pipeline.
+```{r}
+
+setwd("/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/results")
+
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/canopy_cover_phenotypes_hapmapnames.csv", check.names = FALSE)
+
+c_Area <- c[,c(1:7)]
+
+# Change design variables to "factor"
+names <- c(1:6)
+c_Area[,names] <- lapply(c_Area[,names] , factor)
+
+###################
+#create data frame with 0 rows and 7 columns for storing insignificant factors
+all_insig_factors <- data.frame(matrix(ncol = 7, nrow = 0))
+
+#provide column names
+colnames(all_insig_factors) <- c("Df", "Sum Sq", "Mean Sq", "F value", "Pr(>F)", "factor", "GDD" )
+
+#create data frame with 0 rows and 7 columns for storing all factors
+all_factors <- data.frame(matrix(ncol = 7, nrow = 0))
+
+#provide column names
+colnames(all_factors) <- c("Df", "Sum Sq", "Mean Sq", "F value", "Pr(>F)", "factor", "GDD")
+
+Years <- c(2018, 2019, 2020, 2021)
+
+for(a in Years){
+  
+    GDD.temp <- c_Area %>%
+    filter(Year == a)
+    
+  for (j in 7:ncol(GDD.temp)) {
+     
+      # Subset main data frame into design factors and one phenotype measurement
+      trait_df <- GDD.temp[, c(1:6, j)]
+      
+      # Remove NA values
+      trait_df <- na.omit(trait_df)
+  
+      # Fit model
+      m2 <- lm(trait_df[,7] ~ taxa + Rep + Block%in%Rep, data = trait_df)
+      
+      # Export model ANOVA results to new data frame
+      m2_results <- anova(m2)
+      
+      # Get names of factors
+      m2_names <- tibble(factor = rownames(m2_results))
+      
+      # Add factor names as own column
+      m2_coefficients <- cbind(m2_results, m2_names)
+      
+      # Save factors
+      model_factors <- m2_coefficients %>%
+        remove_rownames() %>%
+        mutate(GDD = colnames(trait_df[7]),
+               Year = a)
+      
+      # Save to df for export
+      all_factors <- rbind(all_factors, model_factors)
+      
+      # Filter significant factors from model
+      m2_sig <- m2_coefficients %>%
+        filter(`Pr(>F)` < .05)
+      
+      # Turn significant factors into list
+      sig_factors <- m2_sig$factor
+      
+       # Filter insignificant factors from model
+      m2_insig <- m2_coefficients %>%
+        remove_rownames() %>%
+        mutate(GDD = colnames(trait_df[7]),
+               Year = a) %>%
+        filter(`Pr(>F)` > .05)
+      
+       # Store insignificant factors from model to reference which were NOT included in BLUPs
+      all_insig_factors <- rbind(all_insig_factors, m2_insig)
+
+#       # Make BLUPs if Rep and Rep:Block are both significant
+#       if ("Rep" %in% sig_factors && "Rep:Block" %in% sig_factors) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + Rep + Rep%in%Block, data = trait_df, REML = TRUE)
+#       }
+# 
+#        # Make BLUPs neither Repo or Rep:Block is significant
+#       if (!("Rep" %in% sig_factors) && !("Rep:Block" %in% sig_factors)) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa), data = trait_df, REML = TRUE)
+# }
+# 
+#       # Make BLUPs if only Rep is significant
+#       if ("Rep" %in% sig_factors && !("Rep:Block" %in% sig_factors)) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + Rep, data = trait_df, REML = TRUE)
+# }
+# 
+#       # Make BLUPs if only Rep:Block is both significant
+#       if ("Rep:Block" %in% sig_factors && !("Rep" %in% sig_factors)) {
+# 
+#         # Can't just include block, because it is not an independant factor (nested in Rep) so the rank of the model will be wrong. Have to rename Block to be independant
+# 
+#         # Make new column for independent block
+#         trait_df$Solo_Block <- NA
+# 
+#         # For each row
+#         for (j in 1:nrow(trait_df)) {
+# 
+#         # Rename Block as unique letter based on rep/block combo
+#         if (trait_df[j,]$Block == 1){
+#           if (trait_df[j,]$Rep == 1) {
+#           trait_df[j,8] <- "A"}
+#           if (trait_df[j,]$Rep == 2) {
+#           trait_df[j,8] <- "C"}
+#         }
+#         if (trait_df[j,]$Block == 2){
+#           if (trait_df[j,]$Rep == 1) {
+#           trait_df[j,8] <- "B"}
+#           if (trait_df[j,]$Rep == 2) {
+#           trait_df[j,8] <- "D"}
+#         }}
+# 
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + Solo_Block, data = trait_df, REML = TRUE)
+# }
+# 
+#       #Isolate random effects of each phenotype
+#       BLUPS <- ranef(m3)$taxa
+#       iBLUP <- tibble(taxa = rownames(BLUPS), BLUPS = BLUPS[[1]])
+# 
+#       # Make identifier with GDD
+#       GDD <- colnames(trait_df[7])
+# 
+#       # Code if you want to add GDD and year to BLUP files
+#       # iBLUP$GDD <- GDD
+#       # iBLUP$Year <- a
+# 
+#       # Save results from each GDD as own txt file
+#       write.table(iBLUP, file = paste0("BLUPs_Area_",a,"_", GDD, ".txt"), sep = "\t", row.names = FALSE)
+   }
+}
+
+write.csv(all_insig_factors, "/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/model_factors/insignificant/AUPC_intra_year_insignificant_factors.csv", row.names = FALSE)
+
+write.csv(all_factors, "/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/model_factors/AUPC_intra_year_all_factors.csv", row.names = FALSE)
+
+
+```
+
+## Step 4: ANOVA and BLUP Loop for Adult Vegetative Exponential Slope
+Code adapted from Dorothy Sweet and Johnathan Renk GWAS pipeline.
+```{r}
+
+setwd("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/data/BLUP_output/")
+
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/canopy_cover_phenotypes_hapmapnames.csv", check.names = FALSE)
+
+c_Expslope <- c[,c(1:6, 63)]
+
+# Change design variables to "factor"
+names <- c(1:6)
+c_Expslope[,names] <- lapply(c_Expslope[,names] , factor)
+
+###################
+#create data frame with 0 rows and 7 columns for storing insignificant factors
+all_insig_factors <- data.frame(matrix(ncol = 7, nrow = 0))
+
+#provide column names
+colnames(all_insig_factors) <- c("Df", "Sum Sq", "Mean Sq", "F value", "Pr(>F)", "factor", "GDD" )
+
+#create data frame with 0 rows and 7 columns for storing all factors
+all_factors <- data.frame(matrix(ncol = 7, nrow = 0))
+
+#provide column names
+colnames(all_factors) <- c("Df", "Sum Sq", "Mean Sq", "F value", "Pr(>F)", "factor", "GDD")
+
+Years <- c(2018, 2019, 2020, 2021)
+
+for(a in Years){
+  
+    GDD.temp <- c_Expslope %>%
+    filter(Year == a)
+    
+  for (j in 7:ncol(GDD.temp)) {
+     
+      # Subset main data frame into design factors and one phenotype measurement
+      trait_df <- GDD.temp[, c(1:6, j)]
+      
+      # Remove NA values
+      trait_df <- na.omit(trait_df)
+  
+      # Fit model
+      m2 <- lm(trait_df[,7] ~ taxa + Rep + Block%in%Rep, data = trait_df)
+      
+      # Export model ANOVA results to new data frame
+      m2_results <- anova(m2)
+      
+      # Get names of factors
+      m2_names <- tibble(factor = rownames(m2_results))
+      
+      # Add factor names as own column
+      m2_coefficients <- cbind(m2_results, m2_names)
+      
+      # Save factors
+      model_factors <- m2_coefficients %>%
+        remove_rownames() %>%
+        mutate(GDD = colnames(trait_df[7]),
+               Year = a)
+      
+      # Save to df for export
+      all_factors <- rbind(all_factors, model_factors)
+      
+      # Filter significant factors from model
+      m2_sig <- m2_coefficients %>%
+        filter(`Pr(>F)` < .05)
+      
+      # Turn significant factors into list
+      sig_factors <- m2_sig$factor
+      
+      # Filter insignificant factors from model
+      m2_insig <- m2_coefficients %>%
+        remove_rownames() %>%
+        mutate(GDD = colnames(trait_df[7]),
+               Year = a) %>%
+        filter(`Pr(>F)` > .05)
+      
+       # Store insignificant factors from model to reference which were NOT included in BLUPs
+      all_insig_factors <- rbind(all_insig_factors, m2_insig)
+# 
+#       # Make BLUPs if Rep and Rep:Block are both significant
+#       if ("Rep" %in% sig_factors && "Rep:Block" %in% sig_factors) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + Rep + Rep%in%Block, data = trait_df, REML = TRUE)
+#       }
+# 
+#        # Make BLUPs neither Repo or Rep:Block is significant
+#       if (!("Rep" %in% sig_factors) && !("Rep:Block" %in% sig_factors)) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa), data = trait_df, REML = TRUE)
+# }
+# 
+#       # Make BLUPs if only Rep is significant
+#       if ("Rep" %in% sig_factors && !("Rep:Block" %in% sig_factors)) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + Rep, data = trait_df, REML = TRUE)
+# }
+# 
+#       # Make BLUPs if only Rep:Block is both significant
+#       if ("Rep:Block" %in% sig_factors && !("Rep" %in% sig_factors)) {
+# 
+#         # Can't just include block, because it is not an independent factor (nested in Rep) so the rank of the model will be wrong. Have to rename Block to be independent
+# 
+#         # Make new column for independent block
+#         trait_df$Solo_Block <- NA
+# 
+#         # For each row
+#         for (j in 1:nrow(trait_df)) {
+# 
+#         # Rename Block as unique letter based on rep/block combo
+#         if (trait_df[j,]$Block == 1){
+#           if (trait_df[j,]$Rep == 1) {
+#           trait_df[j,8] <- "A"}
+#           if (trait_df[j,]$Rep == 2) {
+#           trait_df[j,8] <- "C"}
+#         }
+#         if (trait_df[j,]$Block == 2){
+#           if (trait_df[j,]$Rep == 1) {
+#           trait_df[j,8] <- "B"}
+#           if (trait_df[j,]$Rep == 2) {
+#           trait_df[j,8] <- "D"}
+#         }}
+# 
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + Solo_Block, data = trait_df, REML = TRUE)
+# }
+# 
+#       #Isolate random effects of each phenotype
+#       BLUPS <- ranef(m3)$taxa
+#       iBLUP <- tibble(taxa = rownames(BLUPS), BLUPS = BLUPS[[1]])
+# 
+#       # Make identifier with GDD
+#       GDD <- colnames(trait_df[7])
+# 
+#       # Code if you want to add GDD and year to BLUP files
+#       # iBLUP$GDD <- GDD
+#       # iBLUP$Year <- a
+# 
+#       # Save results from each GDD as own txt file
+#       write.table(iBLUP, file = paste0("BLUPs_Exp_",a,"_", GDD, ".txt"), sep = "\t", row.names = FALSE)
+   }
+}
+
+write.csv(all_insig_factors, "/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/model_factors/insignificant/AVS_intra_year_insignificant_factors.csv", row.names = FALSE)
+
+write.csv(all_factors, "/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/model_factors/AVS_intra_year_all_factors.csv", row.names = FALSE)
+
+```
+
+# Step 6: Extract FW stability metrics to solo files
+Rerun 5/23, changing phenotype column name from GDD to "BLUPS" to keep naming conventions the same down the pipeline.
+No model fit because original FW slope calculations already include experimental design.
+```{r}
+
+### POINT ###
+point_FW <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/stability/FW/data/FW_point_b.csv", check.names = FALSE)
+
+taxa_dict <- read.table("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/txt_lists/taxa_field_hapmap_dictionary.txt", sep = "\t", header = TRUE)
+
+# taxa column is the SNP names. Genotype column will match with field names.
+colnames(taxa_dict) <- c("taxa", "Genotype")
+
+# Will have less rows than original because there are some taxa grown that there are no genotypes for
+point_FW_names <- merge(point_FW, taxa_dict, by = "Genotype")
+
+point_FW_names <- point_FW_names[,2:30]
+
+for (i in 1:28) {
+  
+  GDD <- colnames(point_FW_names[i])
+
+  point_FW_subset <- point_FW_names[, c(i, 29)]
+  
+  point_FW_subset <- na.omit(point_FW_subset)
+  
+  colnames(point_FW_subset) <- c("BLUPS", "taxa")
+  
+  point_FW_subset <- point_FW_subset[, c(2, 1)]
+  
+  write.table(point_FW_subset, file = paste0("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/data/BLUP_output/BLUPs_Point_FW_", GDD, ".txt"), sep = "\t", row.names = FALSE)
+  
+}
+
+### SLOPE ###
+slope_FW <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/stability/FW/data/FW_slope_b.csv", check.names = FALSE)
+
+taxa_dict <- read.table("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/txt_lists/taxa_field_hapmap_dictionary.txt", sep = "\t", header = TRUE)
+
+# taxa column is the SNP names. Genotype column will match with field names.
+colnames(taxa_dict) <- c("taxa", "Genotype")
+
+# Will have less rows than original because there are some taxa grown that there are no genotypes for
+slope_FW_names <- merge(slope_FW, taxa_dict, by = "Genotype")
+
+slope_FW_names <- slope_FW_names[,2:29]
+
+for (i in 1:27) {
+  
+  GDD <- colnames(slope_FW_names[i])
+
+  slope_FW_subset <- slope_FW_names[, c(i, 28)]
+  
+  slope_FW_subset <- na.omit(slope_FW_subset)
+  
+  colnames(slope_FW_subset) <- c("BLUPS", "taxa")
+  
+  slope_FW_subset <- slope_FW_subset[, c(2, 1)]
+  
+  write.table(slope_FW_subset, file = paste0("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/data/BLUP_output/BLUPs_Slope_FW_", GDD, ".txt"), sep = "\t", row.names = FALSE)
+  
+}
+
+### AREA ###
+Area_FW <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/stability/FW/data/FW_area_b.csv", check.names = FALSE)
+
+taxa_dict <- read.table("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/txt_lists/taxa_field_hapmap_dictionary.txt", sep = "\t", header = TRUE)
+
+# taxa column is the SNP names. Genotype column will match with field names.
+colnames(taxa_dict) <- c("taxa", "Genotype")
+
+# Will have less rows than original because there are some taxa grown that there are no genotypes for
+Area_FW_names <- merge(Area_FW, taxa_dict, by = "Genotype")
+
+Area_FW_names <- Area_FW_names[,c(2,4)]
+
+for (i in 1:1) {
+  
+  GDD <- colnames(Area_FW_names[i])
+
+  Area_FW_subset <- Area_FW_names[, c(i, 2)]
+  
+  Area_FW_subset <- na.omit(Area_FW_subset)
+  
+  colnames(Area_FW_subset) <- c("BLUPS", "taxa")
+  
+  Area_FW_subset <- Area_FW_subset[, c(2, 1)]
+  
+  write.table(Area_FW_subset, file = paste0("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/data/BLUP_output/BLUPs_Area_FW_", GDD, ".txt"), sep = "\t", row.names = FALSE)
+  
+}
+
+### TRUNCATED EXPONENTIAL SLOPE ###
+Expslope_FW <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/stability/FW/data/FW_expslope_b.csv", check.names = FALSE)
+
+taxa_dict <- read.table("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/txt_lists/taxa_field_hapmap_dictionary.txt", sep = "\t", header = TRUE)
+
+# taxa column is the SNP names. Genotype column will match with field names.
+colnames(taxa_dict) <- c("taxa", "Genotype")
+
+# Will have less rows than original because there are some taxa grown that there are no genotypes for
+Expslope_FW_names <- merge(Expslope_FW, taxa_dict, by = "Genotype")
+
+Expslope_FW_names <- Expslope_FW_names[,c(2,4)]
+
+for (i in 1:1) {
+  
+  GDD <- colnames(Expslope_FW_names[i])
+
+  Expslope_FW_subset <- Expslope_FW_names[, c(i, 2)]
+  
+  Expslope_FW_subset <- na.omit(Expslope_FW_subset)
+  
+  colnames(Expslope_FW_subset) <- c("BLUPS", "taxa")
+  
+  Expslope_FW_subset <- Expslope_FW_subset[, c(2, 1)]
+  
+  write.table(Expslope_FW_subset, file = paste0("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/data/BLUP_output/BLUPs_Exp_FW_", GDD, ".txt"), sep = "\t", row.names = FALSE)
+  
+}
+
+```
+
+# Step 7: Extract AMMI stability metrics to solo files
+Rerun 5/23, changing phenotype column name from GDD to "BLUPS" to keep naming conventions the same down the pipeline.
+No model fit becase original FW slope calculations already include experimental design.
+```{r}
+
+### POINT ###
+point_AMMI <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/stability/AMMI/data/AMMI_point.csv", check.names = FALSE)
+
+point_AMMI_short <- point_AMMI[,c(1,2,13)]
+
+point_AMMI_wide <- pivot_wider(point_AMMI_short, names_from = "GDD", values_from = "AVAMGE")
+
+taxa_dict <- read.table("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/txt_lists/taxa_field_hapmap_dictionary.txt", sep = "\t", header = TRUE)
+
+# taxa column is the SNP names. Genotype column will match with field names.
+colnames(taxa_dict) <- c("taxa", "Genotype")
+
+# Will have less rows than original because there are some taxa grown that there are no genotypes for
+point_AMMI_names <- merge(point_AMMI_wide, taxa_dict, by = "Genotype")
+
+point_AMMI_names <- point_AMMI_names[,2:30]
+
+for (i in 1:28) {
+
+  GDD <- colnames(point_AMMI_names[i])
+
+  point_AMMI_subset <- point_AMMI_names[, c(i, 29)]
+  
+  point_AMMI_subset <- na.omit(point_AMMI_subset)
+  
+  colnames(point_AMMI_subset) <- c("BLUPS", "taxa")
+  
+  point_AMMI_subset <- point_AMMI_subset[, c(2, 1)]
+  
+  write.table(point_AMMI_subset, file = paste0("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/data/BLUP_output/BLUPs_Point_AMMI_", GDD, ".txt"), sep = "\t", row.names = FALSE)
+  
+}
+
+### SLOPE ###
+slope_AMMI <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/stability/AMMI/data/AMMI_slope.csv", check.names = FALSE)
+
+slope_AMMI_short <- slope_AMMI[,c(1,2,13)]
+
+slope_AMMI_wide <- pivot_wider(slope_AMMI_short, names_from = "GDD", values_from = "AVAMGE")
+
+taxa_dict <- read.table("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/txt_lists/taxa_field_hapmap_dictionary.txt", sep = "\t", header = TRUE)
+
+# taxa column is the SNP names. Genotype column will match with field names.
+colnames(taxa_dict) <- c("taxa", "Genotype")
+
+# Will have less rows than original because there are some taxa grown that there are no genotypes for
+slope_AMMI_names <- merge(slope_AMMI_wide, taxa_dict, by = "Genotype")
+
+slope_AMMI_names <- slope_AMMI_names[,2:29]
+
+for (i in 1:27) {
+
+  GDD <- colnames(slope_AMMI_names[i])
+
+  slope_AMMI_subset <- slope_AMMI_names[, c(i, 28)]
+  
+  slope_AMMI_subset <- na.omit(slope_AMMI_subset)
+  
+  colnames(slope_AMMI_subset) <- c("BLUPS", "taxa")
+  
+  slope_AMMI_subset <- slope_AMMI_subset[, c(2, 1)]
+  
+  write.table(slope_AMMI_subset, file = paste0("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/data/BLUP_output/BLUPs_Slope_AMMI_", GDD, ".txt"), sep = "\t", row.names = FALSE)
+  
+}
+
+### TRUNCATED EXPONENTIAL SLOPE ###
+expslope_AMMI <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/stability/AMMI/data/AMMI_expslope.csv", check.names = FALSE)
+
+expslope_AMMI_short <- expslope_AMMI[,c(1,2,13)]
+
+expslope_AMMI_wide <- pivot_wider(expslope_AMMI_short, names_from = "GDD", values_from = "AVAMGE")
+
+taxa_dict <- read.table("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/txt_lists/taxa_field_hapmap_dictionary.txt", sep = "\t", header = TRUE)
+
+# taxa column is the SNP names. Genotype column will match with field names.
+colnames(taxa_dict) <- c("taxa", "Genotype")
+
+# Will have less rows than original because there are some taxa grown that there are no genotypes for
+expslope_AMMI_names <- merge(expslope_AMMI_wide, taxa_dict, by = "Genotype")
+
+expslope_AMMI_names <- expslope_AMMI_names[,2:3]
+
+for (i in 1:1) {
+
+  GDD <- colnames(expslope_AMMI_names[i])
+
+  expslope_AMMI_subset <- expslope_AMMI_names[, c(i, 2)]
+  
+  expslope_AMMI_subset <- na.omit(expslope_AMMI_subset)
+  
+  colnames(expslope_AMMI_subset) <- c("BLUPS", "taxa")
+  
+  expslope_AMMI_subset <- expslope_AMMI_subset[, c(2, 1)]
+  
+  write.table(expslope_AMMI_subset, file = paste0("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/data/BLUP_output/BLUPs_Exp_AMMI_", GDD, ".txt"), sep = "\t", row.names = FALSE)
+  
+}
+
+### AREA ###
+Area_AMMI <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/stability/AMMI/data/AMMI_area.csv", check.names = FALSE)
+
+Area_AMMI_short <- Area_AMMI[,c(1,2,13)]
+
+Area_AMMI_wide <- pivot_wider(Area_AMMI_short, names_from = "GDD", values_from = "AVAMGE")
+
+taxa_dict <- read.table("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/txt_lists/taxa_field_hapmap_dictionary.txt", sep = "\t", header = TRUE)
+
+# taxa column is the SNP names. Genotype column will match with field names.
+colnames(taxa_dict) <- c("taxa", "Genotype")
+
+# Will have less rows than original because there are some taxa grown that there are no genotypes for
+Area_AMMI_names <- merge(Area_AMMI_wide, taxa_dict, by = "Genotype")
+
+Area_AMMI_names <- Area_AMMI_names[,2:3]
+
+for (i in 1:1) {
+
+  GDD <- colnames(Area_AMMI_names[i])
+
+  Area_AMMI_subset <- Area_AMMI_names[, c(i, 2)]
+  
+  Area_AMMI_subset <- na.omit(Area_AMMI_subset)
+  
+  colnames(Area_AMMI_subset) <- c("BLUPS", "taxa")
+  
+  Area_AMMI_subset <- Area_AMMI_subset[, c(2, 1)]
+  
+  write.table(Area_AMMI_subset, file = paste0("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/data/BLUP_output/BLUPs_Area_AMMI_", GDD, ".txt"), sep = "\t", row.names = FALSE)
+}
+```
+
+# Step 8: COMBO BLUP
+Make BLUPs for all environments combined rather than per year to study GxE.
+```{r}
+
+setwd("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/data/BLUP_output/")
+
+c <- read.csv("/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/canopy_cover_phenotypes_hapmapnames.csv", check.names = FALSE)
+
+# Change design variables to "factor"
+names <- c(1:6)
+c[,names] <- lapply(c[,names] , factor)
+
+# Set phenotype categories
+slopes <- seq(1,27)
+slopes <- as.character(slopes)
+points <- seq(300,1650, 50)
+points <- as.character(points)
+
+# Rename formatted data frame
+GDD.temp <- c
+
+#create data frame with 0 rows and 7 columns for storing insignificant factors
+all_insig_factors <- data.frame(matrix(ncol = 7, nrow = 0))
+
+#provide column names
+colnames(all_insig_factors) <- c("Df", "Sum Sq", "Mean Sq", "F value", "Pr(>F)", "factor", "GDD")
+
+#create data frame with 0 rows and 7 columns for storing all factors
+all_factors <- data.frame(matrix(ncol = 7, nrow = 0))
+
+#provide column names
+colnames(all_factors) <- c("Df", "Sum Sq", "Mean Sq", "F value", "Pr(>F)", "factor", "GDD")
+
+for (j in 7:ncol(GDD.temp)) {
+  
+      # Print iteration
+      print(colnames((GDD.temp[j])))
+  
+      # Subset main data frame into design factors and one phenotype measurement
+      trait_df <- GDD.temp[, c(1:6, j)]
+      
+      # Add pheno variable for file name
+      if (colnames(GDD.temp[j]) %in% slopes) {
+      pheno <- "Slope"
+      }
+      if (colnames(GDD.temp[j]) %in% points) {
+      pheno <- "Point"
+      }
+      if (colnames(GDD.temp[j]) == "AUPC") {
+      pheno <- "Area"
+      }
+      if (colnames(GDD.temp[j]) == "Exp") {
+      pheno <- "Exp"
+      }
+      # Remove NA
+      trait_df <- na.omit(trait_df)
+  
+      # Fit model
+      m2 <- lm(trait_df[,7] ~ taxa + Year + taxa*Year + Rep%in%Year + Block%in%Rep%in%Year, data = trait_df)
+
+      # Export model ANOVA results to new data frame
+      m2_results <- anova(m2)
+      
+      # Get names of factors
+      m2_names <- tibble(factor = rownames(m2_results))
+      
+      # Add factor names as own column
+      m2_coefficients <- cbind(m2_results, m2_names)
+      
+      # Save factors
+      model_factors <- m2_coefficients %>%
+        remove_rownames() %>%
+        mutate(GDD = colnames(trait_df[7]),
+               Trait = pheno)
+      
+      # Save to df for export
+      all_factors <- rbind(all_factors, model_factors)
+      
+      # Filter significant factors from model
+      m2_sig <- m2_coefficients %>%
+        filter(`Pr(>F)` < .05)
+      
+      # Turn significant factors into list
+      sig_factors <- m2_sig$factor
+      
+      # Filter insignificant factors from model
+      m2_insig <- m2_coefficients %>%
+        remove_rownames() %>%
+        mutate(GDD = colnames(trait_df[7]),
+               Trait = pheno) %>%
+        filter(`Pr(>F)` > .05)
+      
+       # Store insignificant factors from model to reference which were NOT included in BLUPs
+      all_insig_factors <- rbind(all_insig_factors, m2_insig)
+      
+#       # In general, if an interaction or nested effect contains any effect that is random, then the interaction or nested effect should be considered as a random effect as well. Year is random, so entire model is.
+# 
+#       # Make BLUPs if Year:Rep and Year:Rep:Block are both significant
+#       if ("Year:Rep" %in% sig_factors && "Year:Rep:Block" %in% sig_factors) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + (1|Year) + (1|taxa:Year) + (1|Year:Rep) + (1|Year:Rep:Block), data = trait_df, REML = TRUE)
+#       }
+# 
+#        # Make BLUPs neither Year:Rep or Year:Rep:Block is significant
+#       if (!("Year:Rep" %in% sig_factors) && !("Year:Rep:Block" %in% sig_factors)) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + (1|Year) + (1|taxa:Year), data = trait_df, REML = TRUE)}
+# 
+#       # Make BLUPs if only Year:Rep is significant
+#       if ("Year:Rep" %in% sig_factors && !("Year:Rep:Block" %in% sig_factors)) {
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + (1|Year) + (1|taxa:Year) + (1|Year:Rep), data = trait_df, REML = TRUE)
+# }
+# 
+#       # Make BLUPs if only Year:Rep:Block is  significant
+#       if ("Year:Rep:Block" %in% sig_factors && !("Year:Rep" %in% sig_factors)) {
+# 
+#         # Can't just include block, because it is not an independent factor (nested in Rep) so the rank of the model will be wrong. Have to rename Block to be independent
+# 
+#         # Make new column for independent block
+#         trait_df$Solo_Block <- NA
+# 
+#         # For each row
+#         for (j in 1:nrow(trait_df)) {
+# 
+#         # Rename Block as unique letter based on rep/block combo
+#         if (trait_df[j,]$Block == 1){
+#           if (trait_df[j,]$Rep == 1) {
+#           trait_df[j,8] <- "A"}
+#           if (trait_df[j,]$Rep == 2) {
+#           trait_df[j,8] <- "C"}
+#         }
+#         if (trait_df[j,]$Block == 2){
+#           if (trait_df[j,]$Rep == 1) {
+#           trait_df[j,8] <- "B"}
+#           if (trait_df[j,]$Rep == 2) {
+#           trait_df[j,8] <- "D"}
+#         }}
+# 
+#       m3 <- lmer(trait_df[,7] ~ (1|taxa) + (1|Year) + (1|taxa:Year) + (1|Year:Block), data = trait_df, REML = TRUE)
+# 
+# }
+# 
+#       # Fit genotype as random effect
+#       BLUPS <- ranef(m3)$taxa
+#       iBLUP <- tibble(taxa = rownames(BLUPS), BLUPS = BLUPS[[1]])
+# 
+#       # Save GDD variable for file name
+#       GDD <- colnames(trait_df[7])
+# 
+#       write.table(iBLUP, file = paste0("/Users/jcooper/Desktop/thesis_research/canopy_cover_master/BLUP/data/BLUP_output/BLUPs_", pheno, "_ALL_", GDD, ".txt"), sep = "\t", row.names = FALSE)
+   }
+
+write.csv(all_insig_factors, "/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/model_factors/insignificant/inter_year_insignificant_factors.csv", row.names = FALSE)
+
+write.csv(all_factors, "/Users/jcooper/Desktop/thesis_research/canopy_cover/5_BLUP_calculation/data/model_factors/inter_year_all_factors.csv", row.names = FALSE)
+```
+
